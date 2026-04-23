@@ -1,10 +1,16 @@
-# 🎙️ 实时语音转录工具 (Minimalist Whisper Engine)
+# 实时语音转录工具 (Minimalist Whisper Engine)
+
+### 项目地址
+https://github.com/buxuele/flask-read-mic
+
 
 ![效果图](效果图/20260423-162939-c76abb.jpg)
 
+
+
 这是一个追求极致审美与工业级稳定性的实时语音转录系统。它不仅仅是一个 Whisper 的包装壳，而是通过**滑动窗口上下文纠错逻辑**与**高度克制的一体化 UI**，构建了一个流畅、精准、无干扰的转录体验。
 
-## 🌟 核心特性
+## 核心特性
 
 1.  **更懂语境的转录**：采用滑动窗口机制，系统会动态累加音频流并实时比对上下文。在你还没说完一句话时，它已经在后台静默修正了前几秒的识别错误。
 2.  **极致克制审美**：
@@ -19,14 +25,14 @@
     -   内置 OpenCC 繁简转换。
     -   自动化 CUDA 环境探测，解决 Windows 下的 DLL 依赖噩梦。
 
-## 🛠️ 技术架构
+## 技术架构
 
 -   **Backend**: Flask (Python) + SQLite
 -   **Inference**: Faster-Whisper (ctranslate2)
 -   **Frontend**: Vanilla JS + CSS3 (No Frameworks, No Bloat)
 -   **Storage**: 句子级缓冲机制 (Session State)
 
-## 🚀 快速启动
+## 快速启动
 
 ### 1. 环境准备
 确保您的系统中已安装 Python 3.8+ 以及 NVIDIA 驱动（如果使用 GPU 加速）。
@@ -49,7 +55,7 @@ python flask_app/app.py
 ```
 访问地址：`http://127.0.0.1:5000`
 
-## ⌨️ 快捷键与操作
+## 快捷键与操作
 
 -   **点击西瓜红大按钮**：开始/停止录音。
 -   **侧边栏图标**：收纳/展开历史记录。
