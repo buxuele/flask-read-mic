@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时语音转录</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <style>
+        :root {
+            --sidebar-width: 300px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* 极致极简滚动条：平时不显示，仅在触发滚动时显示极细暗色条 */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #444;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            display: flex;
+            height: 100vh;
+            overflow: hidden; /* 防止滑动时由于越界产生底部恶心滚动条 */
+        }
+        
+        .sidebar {
+            width: var(--sidebar-width);
+            background: #252525;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            transition: margin-left 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+            margin-left: 0;
+            flex-shrink: 0;
+        }
+        
+        .sidebar.collapsed {
+            margin-left: calc(-1 * var(--sidebar-width));
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .sidebar-title {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 15px;
+        }
+        
+        .search-box {
+            width: 100%;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 13px;
+        }
+        
+        .history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .history-item {
+            padding: 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        
+        .history-item:hover {
+            background: #333;
+        }
+        
+        .history-item.selected {
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+        }
+        
+        .history-time {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .history-text {
+            font-size: 13px;
+            color: #ccc;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .sidebar-footer {
+            padding: 15px;
+            border-top: 1px solid #333;
+        }
+        
+        .export-btn {
+            width: 100%;
+            padding: 10px;
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .header {
+            padding: 10px 40px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 500;
+        }
+        
+        .settings-btn {
+            padding: 8px 16px;
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .icon-toggle-btn {
+            background: transparent;
+            border: none;
+            color: #ccc;
+            cursor: pointer;
+            padding: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 40px;
+        }
+        
+        .recorder-section {
+            max-width: 850px; /* 拓宽主工作区，避免小气 */
+            margin: 0 auto;
+        }
+        
+        .mic-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .mic-button {
+            width: 240px; /* 暴增 3 倍体积 */
+            height: 240px;
+            border-radius: 50%;
+            background: #3a3a3a;
+            border: 2px solid #4a4a4a;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            /* 严格禁忌：已完全剔除鼠标 transition 过渡微动效 */
+        }
+        
+        .mic-button.recording {
+            background: #d9234a; /* 高级的西瓜红 */
+            border-color: #d9234a;
+        }
+        
+        .mic-icon {
+            width: 96px; /* 同步放大内核 3 倍 */
+            height: 96px;
+            fill: #e0e0e0;
+        }
+        
+        .visualizer-container {
+            margin: 20px 0;
+            height: 80px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .recording-info {
+            position: absolute;
+            top: 10px;
+            left: 15px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            height: 100%;
+        }
+        
+        .bar {
+            width: 4px;
+            background: #666;
+            border-radius: 2px;
+            transition: height 0.1s ease;
+        }
+        
+        .bar.active {
+            background: linear-gradient(to top, #888, #aaa);
+        }
+        
+        .status {
+            text-align: center;
+            color: #999;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .status.recording {
+            color: #f88;
+        }
+        
+        .action-btn:hover {
+            color: #fff;
+        }
+
+        .action-btn.copied {
+            background: #2e7d32 !important;
+            color: white !important;
+        }
+        
+        .transcripts {
+            /* 去除原先丑陋的“背景套背景”和拘束的内边距 */
+            margin-top: 30px;
+            /* 移除 max-height 避免出现恶心的内部双重滚动条，让其自然顺着外层滚动 */
+        }
+        
+        .transcript-item {
+            margin-bottom: 24px;
+            padding: 25px 35px; /* 加大内部留白，形成真正的“留白高级区” */
+            background: #222; /* 更克制深沉的纯净黑底 */
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4); /* “悬浮面板”的阻尼阴影 */
+            border: 1px solid #2f2f2f; /* 极细分隔线 */
+            line-height: 1.8; /* 让文字呼吸 */
+        }
+        
+        .transcript-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .transcript-time {
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .transcript-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .action-btn {
+            padding: 4px 10px;
+            background: #3a3a3a;
+            color: #ccc;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        
+        .transcript-text {
+            color: #dcdcdc;
+            font-size: 15px;
+            margin-top: 5px;
+        }
+        
+        .transcript-text.editing {
+            background: #2a2a2a;
+            padding: 8px;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            color: #e0e0e0;
+            width: 100%;
+            min-height: 60px;
+            font-family: inherit;
+            font-size: inherit;
+            resize: vertical;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            text-align: center;
+            margin-top: 15px;
+            display: none;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .controls button {
+            flex: 1;
+        }
+
+        button {
+            padding: 12px;
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        .session-group {
+            margin-bottom: 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        
+        .session-header {
+            padding: 12px;
+            background: #2f2f2f;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .session-info {
+            flex: 1;
+        }
+        
+        .session-title {
+            font-size: 13px;
+            color: #e0e0e0;
+            margin-bottom: 4px;
+        }
+        
+        .session-meta {
+            font-size: 11px;
+            color: #888;
+        }
+        
+        .session-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .session-delete-btn {
+            padding: 4px 10px;
+            background: #3a3a3a;
+            color: #ccc;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        
+        .session-segments {
+            display: none;
+            padding: 8px;
+        }
+        
+        .session-segments.expanded {
+            display: block;
+        }
+        
+        .segment-item {
+            padding: 10px;
+            background: #333;
+            border-radius: 4px;
+            margin-bottom: 6px;
+            cursor: pointer;
+        }
+        
+        .segment-item:hover {
+            background: #3a3a3a;
+        }
+        
+        .segment-index {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        
+        .segment-text {
+            font-size: 12px;
+            color: #ccc;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.show {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #2a2a2a;
+            border-radius: 12px;
+            padding: 25px 30px;
+            max-width: 360px; /* 收敛宽度，增加紧凑感 */
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5); /* 增加一点阻尼感的深沉阴影 */
+        }
+        
+        .modal-header {
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 25px;
+            border-bottom: 1px solid #3a3a3a;
+            padding-bottom: 15px;
+        }
+        
+        .setting-item {
+            margin-bottom: 20px;
+        }
+        
+        .setting-label {
+            display: block;
+            font-size: 13px;
+            color: #ccc;
+            margin-bottom: 8px;
+        }
+        
+        .setting-select, .setting-input {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        
+        .setting-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .setting-checkbox input {
+            width: 18px;
+            height: 18px;
+        }
+        
+        .modal-footer {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+        
+        .audio-player {
+            margin-top: 10px;
+            width: 100%;
+        }
+        
+        audio {
+            width: 100%;
+            height: 32px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">历史记录</div>
+                <input type="text" class="search-box" id="searchBox" placeholder="搜索转录内容...">
+            </div>
+            <div class="history-list" id="historyList"></div>
+            <div class="sidebar-footer">
+                <button class="export-btn" id="exportAllBtn">导出全部记录</button>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="header">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <button class="icon-toggle-btn" id="toggleSidebarBtn" title="折叠/展开历史记录">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="9" y1="3" x2="9" y2="21"></line>
+                        </svg>
+                    </button>
+                    <h1>实时语音转录</h1>
+                </div>
+                <button class="settings-btn" id="settingsBtn">设置</button>
+            </div>
+            
+            <div class="content">
+                <div class="recorder-section">
+                    <div class="mic-section">
+                        <div class="mic-button" id="micButton">
+                            <svg class="mic-icon" viewBox="0 0 24 24">
+                                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    <div class="visualizer-container">
+                        <div class="recording-info" id="recordingInfo"></div>
+                        <div class="visualizer" id="visualizer"></div>
+                    </div>
+                    
+                    <div class="status" id="status"></div>
+                    
+                    <div class="transcripts" id="transcripts">
+                    </div>
+                    </div>
+                    
+                    <div class="error" id="error"></div>
+                    
+                    <div class="controls">
+                        <!-- 清空当前历史记录按钮已根据您的极致极简要求删除 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">录音设置</div>
+            
+            <div class="setting-item">
+                <label class="setting-label">分段处理时长 (越短越实时)</label>
+                <select class="setting-select" id="segmentDuration">
+                    <option value="1500">1.5 秒 (极致实时)</option>
+                    <option value="2500" selected>2.5 秒 (推荐的实时感)</option>
+                    <option value="5000">5 秒 (省资源)</option>
+                </select>
+            </div>
+            
+            <div class="setting-item">
+                <label class="setting-label">识别模型</label>
+                <select class="setting-select" id="modelSelect">
+                    <option value="tiny">Tiny (最快)</option>
+                    <option value="base">Base (快速)</option>
+                    <option value="small">Small (平衡)</option>
+                    <option value="medium" selected>Medium (准确)</option>
+                </select>
+            </div>
+            
+            <div class="setting-item">
+                <label class="setting-label">识别语言</label>
+                <select class="setting-select" id="languageSelect">
+                    <option value="zh" selected>中文 (简体)</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+            
+            <div class="setting-item">
+                <label class="setting-checkbox">
+                    <input type="checkbox" id="saveAudio" checked>
+                    <span>保存音频文件</span>
+                </label>
+            </div>
+            
+            <div class="modal-footer">
+                <button id="closeSettingsBtn">关闭</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const micButton = document.getElementById('micButton');
+        const status = document.getElementById('status');
+        const transcripts = document.getElementById('transcripts');
+        const error = document.getElementById('error');
+        // const clearBtn 已删除
+        const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+        const sidebar = document.querySelector('.sidebar');
+        const visualizer = document.getElementById('visualizer');
+        const recordingInfo = document.getElementById('recordingInfo');
+        const historyList = document.getElementById('historyList');
+        const searchBox = document.getElementById('searchBox');
+        const exportAllBtn = document.getElementById('exportAllBtn');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+        const segmentDurationSelect = document.getElementById('segmentDuration');
+        const modelSelect = document.getElementById('modelSelect');
+        const languageSelect = document.getElementById('languageSelect');
+        const saveAudioCheckbox = document.getElementById('saveAudio');
+        
+        let mediaRecorder = null;
+        let audioContext = null;
+        let analyser = null;
+        let isRecording = false;
+        let segmentInterval = null;
+        let audioChunks = [];
+        let stream = null;
+        let segmentCount = 0;
+        let recordingStartTime = 0;
+        let currentSegmentStart = 0;
+        let animationId = null;
+        let currentSessionId = null;
+        
+        let settings = {
+            segmentDuration: 2500,
+            model: 'medium',
+            language: 'zh',
+            saveAudio: true
+        };
+
+        function loadSavedSettings() {
+            const saved = localStorage.getItem('transcription_settings');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                settings = { ...settings, ...parsed };
+                segmentDurationSelect.value = settings.segmentDuration;
+                modelSelect.value = settings.model;
+                languageSelect.value = settings.language;
+                saveAudioCheckbox.checked = settings.saveAudio;
+            }
+        }
+
+        function saveCurrentSettings() {
+            settings = {
+                segmentDuration: parseInt(segmentDurationSelect.value),
+                model: modelSelect.value,
+                language: languageSelect.value,
+                saveAudio: saveAudioCheckbox.checked
+            };
+            localStorage.setItem('transcription_settings', JSON.stringify(settings));
+        }
+
+        segmentDurationSelect.onchange = saveCurrentSettings;
+        modelSelect.onchange = saveCurrentSettings;
+        languageSelect.onchange = saveCurrentSettings;
+        saveAudioCheckbox.onchange = saveCurrentSettings;
+        
+        loadSavedSettings();
+        
+        const BAR_COUNT = 40;
+        
+        for (let i = 0; i < BAR_COUNT; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            bar.style.height = '10px';
+            visualizer.appendChild(bar);
+        }
+        
+        const bars = visualizer.querySelectorAll('.bar');
+        
+        function updateVisualizer() {
+            if (!analyser || !isRecording) return;
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+            
+            const step = Math.floor(dataArray.length / BAR_COUNT);
+            
+            bars.forEach((bar, i) => {
+                const value = dataArray[i * step];
+                const height = Math.max(10, (value / 255) * 60);
+                bar.style.height = height + 'px';
+                bar.classList.add('active');
+            });
+            
+            const elapsed = Date.now() - currentSegmentStart;
+            const remaining = settings.segmentDuration - elapsed;
+            const seconds = Math.ceil(remaining / 1000);
+            recordingInfo.textContent = `已录制 ${segmentCount} 段 | 下次转录: ${seconds}秒`;
+            
+            animationId = requestAnimationFrame(updateVisualizer);
+        }
+        
+        function resetVisualizer() {
+            bars.forEach(bar => {
+                bar.style.height = '10px';
+                bar.classList.remove('active');
+            });
+            recordingInfo.textContent = '';
+        }
+        
+        async function startRecording() {
+            const response = await fetch('/session/start', { method: 'POST' });
+            const data = await response.json();
+            currentSessionId = data.session_id;
+            
+            // 核心逻辑：开始新的录制即清空主转录区，将视野留给当前对话
+            transcripts.innerHTML = '';
+            
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            audioContext = new AudioContext();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(analyser);
+            
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            segmentCount = 0;
+            recordingStartTime = Date.now();
+            currentSegmentStart = Date.now();
+            
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+            
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                if (audioBlob.size > 0) {
+                    await sendAudioToServer(audioBlob);
+                }
+                
+                audioChunks = [];
+                
+                if (isRecording) {
+                    segmentCount++;
+                    currentSegmentStart = Date.now();
+                    mediaRecorder.start();
+                }
+            };
+            
+            mediaRecorder.start();
+            isRecording = true;
+            micButton.classList.add('recording');
+            status.classList.add('recording');
+            status.textContent = `正在录音中，每${settings.segmentDuration/1000}秒自动转录一次`;
+            error.style.display = 'none';
+            modelSelect.disabled = true;
+            languageSelect.disabled = true;
+            
+            updateVisualizer();
+            
+            segmentInterval = setInterval(() => {
+                if (isRecording && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            }, settings.segmentDuration);
+        }
+        
+        function stopRecording() {
+            isRecording = false;
+            
+            if (segmentInterval) {
+                clearInterval(segmentInterval);
+            }
+            
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+            }
+            
+            micButton.classList.remove('recording');
+            status.classList.remove('recording');
+            status.textContent = '正在处理最后的音频...';
+            modelSelect.disabled = false;
+            languageSelect.disabled = false;
+            resetVisualizer();
+            
+            setTimeout(() => {
+                status.textContent = '';
+            }, 2000);
+        }
+        
+        async function sendAudioToServer(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+            formData.append('session_id', currentSessionId);
+            formData.append('model', settings.model);
+            formData.append('language', settings.language);
+            formData.append('save_audio', settings.saveAudio);
+            
+            const response = await fetch('/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.text.trim()) {
+                updateSessionTranscript(data.session_id, data.text, data.segment_index, data.replace_start_index);
+                loadSessions();
+            } else if (!response.ok) {
+                error.textContent = data.error || '转录失败';
+                error.style.display = 'block';
+            }
+        }
+        
+        function updateSessionTranscript(sessionId, text, segmentIndex, replaceStartIndex) {
+            if (transcripts.querySelector('[style*="color: #666"]')) {
+                transcripts.innerHTML = '';
+            }
+            
+            let sessionItem = transcripts.querySelector(`[data-session-id="${sessionId}"]`);
+            
+            if (!sessionItem) {
+                sessionItem = document.createElement('div');
+                sessionItem.className = 'transcript-item';
+                sessionItem.dataset.sessionId = sessionId;
+                
+                const header = document.createElement('div');
+                header.className = 'transcript-header';
+                
+                const time = document.createElement('div');
+                time.className = 'transcript-time';
+                time.textContent = `会话 ${new Date().toLocaleTimeString('zh-CN')} - 实时转录中`;
+                
+                const actions = document.createElement('div');
+                actions.className = 'transcript-actions';
+                
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'action-btn';
+                copyBtn.textContent = '复制全部';
+                copyBtn.onclick = () => {
+                    const fullText = sessionItem.querySelector('.transcript-text').textContent;
+                    copyTranscript(fullText, copyBtn);
+                };
+                
+                actions.appendChild(copyBtn);
+                header.appendChild(time);
+                header.appendChild(actions);
+                
+                const textDiv = document.createElement('div');
+                textDiv.className = 'transcript-text';
+                
+                const newSpan = document.createElement('span');
+                newSpan.dataset.seg = segmentIndex;
+                newSpan.textContent = text;
+                textDiv.appendChild(newSpan);
+                
+                sessionItem.appendChild(header);
+                sessionItem.appendChild(textDiv);
+                transcripts.appendChild(sessionItem);
+            } else {
+                const textDiv = sessionItem.querySelector('.transcript-text');
+                
+                if (replaceStartIndex && replaceStartIndex < segmentIndex) {
+                    for(let i = replaceStartIndex; i < segmentIndex; i++) {
+                        const oldSpan = textDiv.querySelector(`span[data-seg="${i}"]`);
+                        if (oldSpan) oldSpan.remove();
+                    }
+                }
+                
+                const newSpan = document.createElement('span');
+                newSpan.dataset.seg = segmentIndex;
+                newSpan.textContent = (textDiv.children.length > 0 ? " " : "") + text;
+                textDiv.appendChild(newSpan);
+            }
+        }
+        
+        function editTranscript(item, id) {
+            const textDiv = item.querySelector('.transcript-text');
+            const currentText = textDiv.textContent;
+            
+            const textarea = document.createElement('textarea');
+            textarea.className = 'transcript-text editing';
+            textarea.value = currentText;
+            
+            textDiv.replaceWith(textarea);
+            textarea.focus();
+            
+            const saveEdit = async () => {
+                const newText = textarea.value;
+                
+                const response = await fetch(`/record/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: newText })
+                });
+                
+                if (response.ok) {
+                    const newTextDiv = document.createElement('div');
+                    newTextDiv.className = 'transcript-text';
+                    newTextDiv.textContent = newText;
+                    textarea.replaceWith(newTextDiv);
+                    loadHistory();
+                }
+            };
+            
+            textarea.onblur = saveEdit;
+            textarea.onkeydown = (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    saveEdit();
+                }
+            };
+        }
+        
+        function copyTranscript(text, btn) {
+            navigator.clipboard.writeText(text);
+            if (btn) {
+                const originalText = btn.textContent;
+                btn.textContent = '已复制!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }
+        }
+        
+        async function deleteTranscript(item, id) {
+            const response = await fetch(`/record/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                item.remove();
+                loadSessions();
+                
+                if (transcripts.children.length === 0) {
+                    transcripts.innerHTML = '';
+                }
+            }
+        }
+        
+        async function loadSessions() {
+            const response = await fetch('/sessions');
+            const sessions = await response.json();
+            
+            historyList.innerHTML = '';
+            
+            sessions.forEach(session => {
+                const group = document.createElement('div');
+                group.className = 'session-group';
+                
+                const header = document.createElement('div');
+                header.className = 'session-header';
+                
+                const info = document.createElement('div');
+                info.className = 'session-info';
+                
+                const title = document.createElement('div');
+                title.className = 'session-title';
+                // 优先截取正文前 20 字，如果没字则显示“空会话”
+                const previewText = session.full_text && session.full_text.trim() 
+                    ? (session.full_text.length > 20 ? session.full_text.substring(0, 20) + '...' : session.full_text)
+                    : '新会话 (暂无正文)';
+                title.textContent = previewText;
+                
+                const meta = document.createElement('div');
+                meta.className = 'session-meta';
+                const status = session.end_time ? '已完成' : '进行中';
+                meta.textContent = `${session.start_time} | ${session.segment_count} 段 | ${status}`;
+                
+                info.appendChild(title);
+                info.appendChild(meta);
+                
+                const actions = document.createElement('div');
+                actions.className = 'session-actions';
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'session-delete-btn';
+                deleteBtn.textContent = '删除';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteSession(session.session_id);
+                };
+                
+                actions.appendChild(deleteBtn);
+                
+                header.appendChild(info);
+                header.appendChild(actions);
+                
+                const segments = document.createElement('div');
+                segments.className = 'session-segments';
+                
+                session.segments.forEach(segment => {
+                    const segmentItem = document.createElement('div');
+                    segmentItem.className = 'segment-item';
+                    
+                    const index = document.createElement('div');
+                    index.className = 'segment-index';
+                    index.textContent = `片段 ${segment.segment_index} - ${segment.timestamp}`;
+                    
+                    const text = document.createElement('div');
+                    text.className = 'segment-text';
+                    text.textContent = segment.text;
+                    
+                    segmentItem.appendChild(index);
+                    segmentItem.appendChild(text);
+                    
+                    segmentItem.onclick = () => showSessionDetail(session);
+                    
+                    segments.appendChild(segmentItem);
+                });
+                
+                header.onclick = () => {
+                    if (segments.classList.contains('expanded')) {
+                        segments.classList.remove('expanded');
+                    } else {
+                        segments.classList.add('expanded');
+                        showSessionDetail(session);
+                    }
+                };
+                
+                group.appendChild(header);
+                group.appendChild(segments);
+                historyList.appendChild(group);
+            });
+        }
+        
+        function showSessionDetail(session) {
+            transcripts.innerHTML = '';
+            
+            const item = document.createElement('div');
+            item.className = 'transcript-item';
+            item.dataset.sessionId = session.session_id;
+            
+            const header = document.createElement('div');
+            header.className = 'transcript-header';
+            
+            const time = document.createElement('div');
+            time.className = 'transcript-time';
+            time.textContent = `会话 ${session.start_time} - ${session.end_time || '进行中'} (${session.segment_count}段)`;
+            
+            const actions = document.createElement('div');
+            actions.className = 'transcript-actions';
+            
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'action-btn';
+            copyBtn.textContent = '复制全部';
+            copyBtn.onclick = () => copyTranscript(session.full_text, copyBtn);
+            
+            actions.appendChild(copyBtn);
+            header.appendChild(time);
+            header.appendChild(actions);
+            
+            const textDiv = document.createElement('div');
+            textDiv.className = 'transcript-text';
+            textDiv.textContent = session.full_text || '暂无内容';
+            
+            item.appendChild(header);
+            item.appendChild(textDiv);
+            
+            if (session.merged_audio) {
+                const audioPlayer = document.createElement('audio');
+                audioPlayer.className = 'audio-player';
+                audioPlayer.controls = true;
+                audioPlayer.src = `/audio/${session.merged_audio}`;
+                item.appendChild(audioPlayer);
+            }
+            
+            transcripts.appendChild(item);
+        }
+        
+        async function deleteSession(sessionId) {
+            const response = await fetch(`/session/${sessionId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadSessions();
+            }
+        }
+        
+        searchBox.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            const groups = historyList.querySelectorAll('.session-group');
+            
+            groups.forEach(group => {
+                const segments = group.querySelectorAll('.segment-item');
+                let hasMatch = false;
+                
+                segments.forEach(segment => {
+                    const text = segment.querySelector('.segment-text').textContent.toLowerCase();
+                    if (text.includes(query)) {
+                        segment.style.display = 'block';
+                        hasMatch = true;
+                    } else {
+                        segment.style.display = query ? 'none' : 'block';
+                    }
+                });
+                
+                group.style.display = (hasMatch || !query) ? 'block' : 'none';
+                
+                if (query && hasMatch) {
+                    group.querySelector('.session-segments').classList.add('expanded');
+                }
+            });
+        });
+        
+        exportAllBtn.addEventListener('click', async () => {
+            const response = await fetch('/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ format: 'txt' })
+            });
+            
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `transcripts_${new Date().getTime()}.txt`;
+                a.click();
+            }
+        });
+        
+        settingsBtn.addEventListener('click', () => {
+            settingsModal.classList.add('show');
+        });
+        
+        closeSettingsBtn.addEventListener('click', () => {
+            settingsModal.classList.remove('show');
+        });
+        
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                settingsModal.classList.remove('show');
+            }
+        });
+        
+        segmentDurationSelect.addEventListener('change', (e) => {
+            settings.segmentDuration = parseInt(e.target.value);
+            // 实现设置的“秒生效”：如果正在录音，立刻重置录音切片时钟
+            if (isRecording && segmentInterval) {
+                clearInterval(segmentInterval);
+                segmentInterval = setInterval(() => {
+                    if (isRecording && mediaRecorder.state === 'recording') {
+                        mediaRecorder.stop();
+                    }
+                }, settings.segmentDuration);
+                status.textContent = `正在录音中，每${settings.segmentDuration/1000}秒自动转录一次`;
+            }
+        });
+        
+        modelSelect.addEventListener('change', (e) => {
+            settings.model = e.target.value;
+        });
+        
+        languageSelect.addEventListener('change', (e) => {
+            settings.language = e.target.value;
+        });
+        
+        saveAudioCheckbox.addEventListener('change', (e) => {
+            settings.saveAudio = e.target.checked;
+        });
+        
+        micButton.addEventListener('click', async () => {
+            if (isRecording) {
+                stopRecording();
+                
+                if (currentSessionId) {
+                    const response = await fetch(`/session/${currentSessionId}/finalize`, {
+                        method: 'POST'
+                    });
+                    
+                    if (response.ok) {
+                        loadSessions();
+                    }
+                }
+            } else {
+                await startRecording();
+            }
+        });
+        
+        // clearBtn click logic deleted
+        
+        // 响应折叠命令，实现真正的致敬经典收缩布局
+        toggleSidebarBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+        });
+        
+        loadSessions();
+    </script>
+</body>
+</html>

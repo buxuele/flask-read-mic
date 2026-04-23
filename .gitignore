@@ -1,0 +1,46 @@
+# 虚拟环境与依赖
+venv/
+.venv/
+env/
+flask_venv/
+build/
+dist/
+*.egg-info/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# === 核心隐私与数据隔离 (重点) ===
+# 所有的音频切片、合并音频、转录文本全都在这里，坚决不准发布
+flask_app/recordings/audio/
+flask_app/recordings/transcripts/
+# 数据库文件 (包含所有会话历史)
+flask_app/recordings/data.db
+flask_app/recordings/*.db
+flask_app/uploads/
+
+# 配置文件
+.env
+.env.local
+config.local.py
+
+# 脚本与临时测试文件
+test_whisper.py
+gpu.py
+check_version.py
+g1.py
+*.bat
+!just_run.bat 
+my_files.txt
+cat_code.py
+todo.md

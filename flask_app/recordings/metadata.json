@@ -1,0 +1,101 @@
+[
+  {
+    "id": "20260307_004511_497",
+    "session_id": "session_20260307_004504",
+    "segment_index": 1,
+    "timestamp": "2026-03-07 00:45:21",
+    "text": "Come on bro, tell me something broNah bro, you cool bro",
+    "audio_file": "session_20260307_004504/segment_001.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004525_490",
+    "session_id": "session_20260307_004504",
+    "segment_index": 2,
+    "timestamp": "2026-03-07 00:45:26",
+    "text": "",
+    "audio_file": "session_20260307_004504/segment_002.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004532_494",
+    "session_id": "session_20260307_004504",
+    "segment_index": 3,
+    "timestamp": "2026-03-07 00:45:33",
+    "text": "很酷吧我知道,很棒很棒,谢谢你",
+    "audio_file": "session_20260307_004504/segment_003.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004539_491",
+    "session_id": "session_20260307_004504",
+    "segment_index": 4,
+    "timestamp": "2026-03-07 00:45:40",
+    "text": "",
+    "audio_file": "session_20260307_004504/segment_004.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004544_896",
+    "session_id": "session_20260307_004504",
+    "segment_index": 5,
+    "timestamp": "2026-03-07 00:45:45",
+    "text": "",
+    "audio_file": "session_20260307_004504/segment_005.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004605_015",
+    "session_id": "session_20260307_004557",
+    "segment_index": 1,
+    "timestamp": "2026-03-07 00:46:05",
+    "text": "God damn broTell me something new broWhat's the news",
+    "audio_file": "session_20260307_004557/segment_001.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004612_032",
+    "session_id": "session_20260307_004557",
+    "segment_index": 2,
+    "timestamp": "2026-03-07 00:46:14",
+    "text": "賞this just so fuckingf Throw",
+    "audio_file": "session_20260307_004557/segment_002.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004619_024",
+    "session_id": "session_20260307_004557",
+    "segment_index": 3,
+    "timestamp": "2026-03-07 00:46:21",
+    "text": "這好棒",
+    "audio_file": "session_20260307_004557/segment_003.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_004624_381",
+    "session_id": "session_20260307_004557",
+    "segment_index": 4,
+    "timestamp": "2026-03-07 00:46:24",
+    "text": "",
+    "audio_file": "session_20260307_004557/segment_004.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_005002_157",
+    "session_id": "session_20260307_004955",
+    "segment_index": 1,
+    "timestamp": "2026-03-07 00:50:29",
+    "text": "for real bronah I'm all good thank you bro",
+    "audio_file": "session_20260307_004955/segment_001.wav",
+    "model": "medium"
+  },
+  {
+    "id": "20260307_005012_692",
+    "session_id": "session_20260307_005011",
+    "segment_index": 1,
+    "timestamp": "2026-03-07 00:50:31",
+    "text": "",
+    "audio_file": "session_20260307_005011/segment_001.wav",
+    "model": "medium"
+  }
+]

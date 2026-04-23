@@ -1,0 +1,16 @@
+Flask
+Werkzeug
+
+ctranslate2
+
+pydub
+PyAudio
+sounddevice
+
+opencc-python-reimplemented
+
+numpy
+ffmpeg-python
+huggingface_hub
+tokenizers
+tqdm

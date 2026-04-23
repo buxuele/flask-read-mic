@@ -1,0 +1,22 @@
+[
+  {
+    "session_id": "session_20260307_004504",
+    "start_time": "2026-03-07 00:45:04",
+    "segment_count": 5
+  },
+  {
+    "session_id": "session_20260307_004557",
+    "start_time": "2026-03-07 00:45:57",
+    "segment_count": 4
+  },
+  {
+    "session_id": "session_20260307_004955",
+    "start_time": "2026-03-07 00:49:55",
+    "segment_count": 0
+  },
+  {
+    "session_id": "session_20260307_005011",
+    "start_time": "2026-03-07 00:50:11",
+    "segment_count": 1
+  }
+]
