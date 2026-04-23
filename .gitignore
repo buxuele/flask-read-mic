@@ -28,6 +28,7 @@ flask_app/recordings/transcripts/
 flask_app/recordings/data.db
 flask_app/recordings/*.db
 flask_app/uploads/
+.claude/
 
 # 配置文件
 .env
@@ -44,3 +45,5 @@ g1.py
 my_files.txt
 cat_code.py
 todo.md
+
+
