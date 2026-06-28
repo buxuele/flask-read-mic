@@ -2,10 +2,9 @@ import os
 import site
 import sys
 from faster_whisper import WhisperModel
+from logger import transcribe_logger
 
-# 自动定位并通过系统路径加载 NVIDIA CUDA DLL 文件
 def add_cuda_to_path():
-    # 优先查找当前 Python 环境下的 site-packages
     try:
         paths = site.getsitepackages()
         for p in paths:
@@ -16,8 +15,9 @@ def add_cuda_to_path():
                     if os.path.exists(bin_path):
                         if bin_path not in os.environ["PATH"]:
                             os.environ["PATH"] = bin_path + os.pathsep + os.environ["PATH"]
+                            transcribe_logger.info(f"已添加 CUDA 路径: {bin_path}")
     except Exception as e:
-        print(f"Warning: Failed to auto-configure CUDA DLL paths: {e}")
+        transcribe_logger.warning(f"CUDA 路径配置失败: {e}")
 
 add_cuda_to_path()
 
@@ -27,31 +27,35 @@ _models = {}
 
 def get_model(model_name='medium'):
     if model_name not in _models:
-        print(f"Loading model: {model_name} on {DEVICE} ({COMPUTE_TYPE})")
+        transcribe_logger.info(f"正在加载模型: {model_name} on {DEVICE} ({COMPUTE_TYPE})")
         _models[model_name] = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE_TYPE)
-        print(f"Model {model_name} loaded.")
+        transcribe_logger.info(f"模型 {model_name} 加载完成")
     return _models[model_name]
 
 def transcribe_audio(wav_path, model_name, language):
-    model = get_model(model_name)
-    
-    # 显著加强 Prompt 诱导：要求多标点、结构化、无语气词
-    prompt = "这是一段访谈对谈录音，包含详细的逗号、问号、感叹号。标点符号要多，结构要清晰，去掉无意义的语气助词。" if language == 'zh' else "This is a structured interview with plenty of commas, periods, and question marks. Punctuation should be rich and grammar should be perfect."
-    
-    segments, _ = model.transcribe(
-        wav_path,
-        language=language,
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=1000),
-        beam_size=5,
-        without_timestamps=True,
-        initial_prompt=prompt
-    )
-    text = " ".join([s.text.strip() for s in segments if s.text.strip()])
+    try:
+        model = get_model(model_name)
+        
+        prompt = "这是一段访谈对谈录音，包含详细的逗号、问号、感叹号。标点符号要多，结构要清晰，去掉无意义的语气助词。" if language == 'zh' else "This is a structured interview with plenty of commas, periods, and question marks. Punctuation should be rich and grammar should be perfect."
+        
+        segments, _ = model.transcribe(
+            wav_path,
+            language=language,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=1000),
+            beam_size=5,
+            without_timestamps=True,
+            initial_prompt=prompt
+        )
+        text = " ".join([s.text.strip() for s in segments if s.text.strip()])
 
-    if language == 'zh' and text:
-        from opencc import OpenCC
-        cc = OpenCC('t2s')
-        text = cc.convert(text)
+        if language == 'zh' and text:
+            from opencc import OpenCC
+            cc = OpenCC('t2s')
+            text = cc.convert(text)
 
-    return text
+        transcribe_logger.info(f"转录成功，文本长度: {len(text)}")
+        return text
+    except Exception as e:
+        transcribe_logger.error(f"转录失败: {e}")
+        raise

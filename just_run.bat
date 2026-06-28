@@ -1,10 +1,13 @@
 
 
-
 @echo off
+
 
 
 cd flask_app/
 
-python app.py 
+echo Starting Background Desktop Agent...
+start /B python desktop_agent.py
 
+echo Starting Flask Server...
+python app.py

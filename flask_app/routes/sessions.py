@@ -54,6 +54,24 @@ def finalize_session(session_id):
     conn.commit()
 
     full_text = session['full_text'] or ''
+    
+    # 增加后期处理：LLM 修复转录结果 (语句、标点)
+    if full_text.strip():
+        try:
+            import sys
+            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if root_dir not in sys.path:
+                sys.path.append(root_dir)
+            from llm import process_text
+            
+            fixed_text = process_text(full_text)
+            if fixed_text and fixed_text != full_text:
+                full_text = fixed_text
+                conn.execute("UPDATE sessions SET full_text = ? WHERE session_id = ?", (full_text, session_id))
+                conn.commit()
+        except Exception as e:
+            print(f"LLM Post-processing failed: {e}")
+
     full_text_file = os.path.join(TRANSCRIPT_DIR, f'{session_id}_full.txt')
     with open(full_text_file, 'w', encoding='utf-8') as f:
         f.write(f'会话: {session_id}\n')
