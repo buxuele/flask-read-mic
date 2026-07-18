@@ -43,7 +43,7 @@ def transcribe_audio(wav_path, model_name, language):
             language=language,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=1000),
-            beam_size=5,
+            beam_size=1,
             without_timestamps=True,
             initial_prompt=prompt
         )

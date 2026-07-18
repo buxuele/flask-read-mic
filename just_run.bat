@@ -1,13 +1,8 @@
 
 
-@echo off
+call .\venv\Scripts\activate.bat
 
+cd src
 
-
-cd flask_app/
-
-echo Starting Background Desktop Agent...
-start /B python desktop_agent.py
-
-echo Starting Flask Server...
 python app.py
+

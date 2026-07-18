@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, send_file
 import os
 import time
+import numpy as np
+import soundfile as sf
 from datetime import datetime
 from io import BytesIO
 from pydub import AudioSegment
@@ -9,6 +11,8 @@ from database import get_db
 from services import transcribe_audio
 from logger import transcribe_logger
 from cleanup import cleanup_session_state
+
+MAX_WINDOW_SECONDS = 8  # 滑动窗口上限，防止音频无限堆积导致 O(n²) 重转录
 
 records_bp = Blueprint('records', __name__)
 
@@ -62,47 +66,58 @@ def transcribe():
         audio_bytes = file.read()
         webm_io = BytesIO(audio_bytes)
 
-        audio = AudioSegment.from_file(webm_io, format='webm')
-        
+        # 用 pydub 解码 webm （仅此一次 ffmpeg 调用）
+        audio_seg = AudioSegment.from_file(webm_io, format='webm')
+        audio_seg = audio_seg.set_channels(1).set_frame_rate(16000)
+        new_samples = np.array(audio_seg.get_array_of_samples(), dtype=np.float32) / 32768.0
+        sample_rate = 16000
+
         if session_id not in SESSION_STATE:
             SESSION_STATE[session_id] = {
-                'audio': AudioSegment.empty(), 
-                'start_index': segment_index, 
+                'chunks': [],
+                'start_index': segment_index,
                 'last_text': '',
                 'last_update': time.time()
             }
-            
+
         state = SESSION_STATE[session_id]
-        state['audio'] += audio
+        state['chunks'].append(new_samples)
         state['last_update'] = time.time()
-        
+
+        # 滑动窗口：超出上限时截採最早的块，保持最近8秒上下文
+        max_samples = MAX_WINDOW_SECONDS * sample_rate
+        while sum(len(c) for c in state['chunks']) > max_samples and len(state['chunks']) > 1:
+            state['chunks'].pop(0)
+
+        combined = np.concatenate(state['chunks'])
         wav_io = BytesIO()
-        state['audio'].export(wav_io, format='wav')
+        sf.write(wav_io, combined, sample_rate, format='WAV', subtype='PCM_16')
         wav_io.seek(0)
 
         text = transcribe_audio(wav_io, model_name, language)
-        
+
+        total_samples = sum(len(c) for c in state['chunks'])
         is_sealed = False
         last_text = state.get('last_text', '')
-        
+
         if text and text[-1] in ['。', '！', '？', '.', '!', '?']:
             is_sealed = True
         elif mode == 'command' and text and text == last_text:
             is_sealed = True
-        elif len(state['audio']) > 15000:
+        elif total_samples >= max_samples:
             is_sealed = True
-            
+
         state['last_text'] = text
-            
+
         replace_start_index = state['start_index']
-        
+
         if replace_start_index < segment_index:
-            conn.execute("UPDATE records SET text = '' WHERE session_id = ? AND segment_index >= ? AND segment_index < ?", 
+            conn.execute("UPDATE records SET text = '' WHERE session_id = ? AND segment_index >= ? AND segment_index < ?",
                         (session_id, replace_start_index, segment_index))
-                        
+
         if is_sealed:
             del SESSION_STATE[session_id]
-            
+
             if mode == 'command' and text.strip():
                 from commander import execute_command
                 cmd_result = execute_command(text)
@@ -110,8 +125,9 @@ def transcribe():
                     text = f"收到指令：{text}\n{cmd_result}"
 
         if save_audio:
+            wav_io.seek(0)
             with open(wav_path, 'wb') as f:
-                f.write(wav_io.getvalue())
+                f.write(wav_io.read())
 
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(f'会话: {session_id}\n')

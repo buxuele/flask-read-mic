@@ -1,14 +1,8 @@
 Flask
 Werkzeug
 python-dotenv
-
 ctranslate2
-
 pydub
-PyAudio>=0.2.13
-opencc>=1.1.7
-
-# 桌面集成依赖
 sounddevice>=0.4.6
 soundfile>=0.12.1
 numpy>=1.26.0
@@ -18,12 +12,10 @@ Pillow>=10.2.0
 pyautogui>=0.9.54
 pyperclip>=1.8.2
 requests>=2.31.0
-
 opencc-python-reimplemented
-
-numpy
 ffmpeg-python
 huggingface_hub
 tokenizers
 tqdm
 openai
+faster-whisper
