@@ -17,7 +17,16 @@ ui设计要求.md
 技术博客.md
 记录过程.md
 项目记录.md
-llm.py 
+todo.md
+my_files.txt
+cat_code.py
+
+# 模型权重
+models/
+
+# 录音数据与转录产物（含用户语音，绝不入库）
+src/recordings/
+src/logs/
 
 # Python 缓存
 __pycache__/
@@ -33,12 +42,12 @@ Thumbs.db
 *.swp
 
 # 核心隐私与数据隔离
-flask_app/recordings/audio/
-flask_app/recordings/transcripts/
-flask_app/recordings/data.db
-flask_app/recordings/*.db
-flask_app/uploads/
-.claude/
+src/recordings/
+src/recordings/audio/
+src/recordings/transcripts/
+src/recordings/data.db
+src/recordings/*.db
+uploads/
 
 # 日志文件
 logs/
@@ -56,7 +65,4 @@ check_version.py
 g1.py
 *.bat
 !just_run.bat 
-my_files.txt
-cat_code.py
-todo.md
 

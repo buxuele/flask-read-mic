@@ -1,61 +1,140 @@
 import os
-import site
-import sys
-from faster_whisper import WhisperModel
+import threading
+
+import numpy as np
+
+from config import (
+    ASR_BATCH_SIZE,
+    ASR_DEVICE,
+    ASR_DTYPE,
+    ASR_MAX_NEW_TOKENS,
+    ASR_MODEL_ID,
+    SAMPLE_RATE,
+)
 from logger import transcribe_logger
 
-def add_cuda_to_path():
-    try:
-        paths = site.getsitepackages()
-        for p in paths:
-            nvidia_base = os.path.join(p, "nvidia")
-            if os.path.exists(nvidia_base):
-                for sub_pkg in os.listdir(nvidia_base):
-                    bin_path = os.path.join(nvidia_base, sub_pkg, "bin")
-                    if os.path.exists(bin_path):
-                        if bin_path not in os.environ["PATH"]:
-                            os.environ["PATH"] = bin_path + os.pathsep + os.environ["PATH"]
-                            transcribe_logger.info(f"已添加 CUDA 路径: {bin_path}")
-    except Exception as e:
-        transcribe_logger.warning(f"CUDA 路径配置失败: {e}")
+# torch 冷启动要 3 秒，而模型只在真正转录时才用到。
+# 除非显式设置 ASR_EAGER_IMPORT=1，否则一律等到 get_model() 再导入。
+_EAGER = os.getenv('ASR_EAGER_IMPORT') == '1'
+if _EAGER:
+    import torch
 
-add_cuda_to_path()
+# Qwen3-ASR 在中文场景会混入繁体（如「這個」「麼」），统一转简体输出
+_CONVERTER = None
 
-from config import DEVICE, COMPUTE_TYPE
 
-_models = {}
-
-def get_model(model_name='medium'):
-    if model_name not in _models:
-        transcribe_logger.info(f"正在加载模型: {model_name} on {DEVICE} ({COMPUTE_TYPE})")
-        _models[model_name] = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE_TYPE)
-        transcribe_logger.info(f"模型 {model_name} 加载完成")
-    return _models[model_name]
-
-def transcribe_audio(wav_path, model_name, language):
-    try:
-        model = get_model(model_name)
-        
-        prompt = "这是一段访谈对谈录音，包含详细的逗号、问号、感叹号。标点符号要多，结构要清晰，去掉无意义的语气助词。" if language == 'zh' else "This is a structured interview with plenty of commas, periods, and question marks. Punctuation should be rich and grammar should be perfect."
-        
-        segments, _ = model.transcribe(
-            wav_path,
-            language=language,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=1000),
-            beam_size=1,
-            without_timestamps=True,
-            initial_prompt=prompt
-        )
-        text = " ".join([s.text.strip() for s in segments if s.text.strip()])
-
-        if language == 'zh' and text:
-            from opencc import OpenCC
-            cc = OpenCC('t2s')
-            text = cc.convert(text)
-
-        transcribe_logger.info(f"转录成功，文本长度: {len(text)}")
+def to_simplified(text):
+    global _CONVERTER
+    if not text:
         return text
-    except Exception as e:
-        transcribe_logger.error(f"转录失败: {e}")
-        raise
+    if _CONVERTER is None:
+        from opencc import OpenCC
+        _CONVERTER = OpenCC('t2s')
+    return _CONVERTER.convert(text)
+
+
+_DTYPE_NAMES = ('bfloat16', 'float16', 'float32')
+
+STATUS_IDLE = 'idle'        # 尚未开始加载
+STATUS_LOADING = 'loading'  # 正在加载权重
+STATUS_WARMING = 'warming'  # 权重就绪，正在跑首次推理预热 CUDA kernel
+STATUS_READY = 'ready'      # 可用
+STATUS_ERROR = 'error'      # 加载失败
+
+_load_lock = threading.RLock()   # 用可重入锁，warmup 内部还会再调 get_model
+_infer_lock = threading.Lock()
+_model = None
+_status = STATUS_IDLE
+_error = None
+
+
+def model_status():
+    """给前端轮询用：模型当前处于哪个阶段"""
+    return {'status': _status, 'error': _error, 'model': ASR_MODEL_ID}
+
+
+def _cuda_available():
+    import torch
+
+    return torch.cuda.is_available()
+
+
+def get_model():
+    """懒加载并缓存 ASR 模型。必须在持有 _load_lock 的状态下调用。"""
+    global _model, _status, _error
+    if _model is not None:
+        return _model
+
+    _status = STATUS_LOADING
+    _error = None
+
+    import torch
+
+    # 必须先于任何 AutoModel 调用完成 qwen3_asr 架构注册
+    from qwen_asr import Qwen3ASRModel
+
+    if _cuda_available():
+        device = ASR_DEVICE
+        dtype = getattr(torch, ASR_DTYPE)
+    else:
+        device, dtype = "cpu", torch.float32
+        transcribe_logger.warning("未检测到 CUDA，ASR 回落至 CPU/float32，速度会很慢")
+
+    transcribe_logger.info(f"正在加载模型: {ASR_MODEL_ID} on {device} ({dtype})")
+    _model = Qwen3ASRModel.from_pretrained(
+        ASR_MODEL_ID,
+        dtype=dtype,
+        device_map=device,
+        attn_implementation="sdpa",
+        max_inference_batch_size=ASR_BATCH_SIZE,
+        max_new_tokens=ASR_MAX_NEW_TOKENS,
+    )
+    transcribe_logger.info(f"模型 {ASR_MODEL_ID} 权重加载完成")
+    return _model
+
+
+def preload_in_background():
+    """启动即后台预热。权重加载约 4 秒，首次推理预热约 13 秒，
+    两者都做完，第一次真实录音才能秒出结果。"""
+    global _status, _error
+
+    def worker():
+        global _status, _error
+        try:
+            with _load_lock:
+                model = get_model()
+                _status = STATUS_WARMING
+                # 用 1 秒静音跑一次推理，把 CUDA kernel 编译成本提前付掉
+                transcribe_audio(np.zeros(SAMPLE_RATE, dtype=np.float32), language=None)
+            _status = STATUS_READY
+            transcribe_logger.info("模型已就绪，可以开始录音")
+        except Exception as e:
+            _status = STATUS_ERROR
+            _error = str(e)
+            transcribe_logger.error(f"模型预热失败: {e}")
+
+    threading.Thread(target=worker, name='model-warmup', daemon=True).start()
+
+
+def transcribe_audio(samples, language, context=""):
+    """samples: 16kHz 单声道 float32 ndarray。language: 规范语言名或 None。"""
+    samples = np.asarray(samples, dtype=np.float32)
+    if samples.size == 0:
+        return ""
+
+    # 加载锁与推理锁必须分开，否则同线程重复获取非重入锁会死锁
+    with _load_lock:
+        model = get_model()
+
+    with _infer_lock:
+        results = model.transcribe(
+            audio=(samples, SAMPLE_RATE),
+            context=context,
+            language=language,
+        )
+
+    text = results[0].text.strip()
+    detected = results[0].language
+    if detected == "Chinese":
+        text = to_simplified(text)
+    return text

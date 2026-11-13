@@ -1,98 +1,131 @@
-# 实时语音转录工具 (Minimalist Whisper Engine)
+# 实时语音转录
 
-### 项目地址
-https://github.com/buxuele/flask-read-mic
+本地运行的语音转文字工具。Qwen3-ASR-0.6B 在本机 GPU 推理，提供网页实时转录、双击 Ctrl 全局语音输入、局域网 API 三种用法。
 
+![界面](效果图/界面.png)
 
-![效果图](效果图/20260423-162939-c76abb.jpg)
+## 功能
 
+1. 网页实时转录：说完停顿约 0.6 秒即出字，滑动窗口自动校正前文，输出统一简体。
+2. 全局语音输入：任意窗口双击 Ctrl 说话，松手后自动注入焦点输入框，支持浏览器、微信、Word、终端与命令行工具。
+3. 局域网 API：启动即监听独立端口，同网段的 Mac、手机、脚本可直接调用，与网页共用同一份模型。
+4. 历史管理：会话留存、内容搜索、一键导出、合并音频回放。
+5. 单人使用定位：推理串行排队，多人并发时的行为与容量见 [docs/API.md](docs/API.md)。
 
-这是一个追求极致审美与工业级稳定性的实时语音转录系统。它不仅仅是一个 Whisper 的包装壳，而是通过**滑动窗口上下文纠错逻辑**与**高度克制的一体化 UI**，构建了一个流畅、精准、无干扰的转录体验。
+## 快速开始
 
-## 核心特性
+1. 环境要求：Windows 10 及以上，Python 3.11，NVIDIA 显卡，显存 4GB 以上。
 
-1.  **更懂语境的转录**：采用滑动窗口机制，系统会动态累加音频流并实时比对上下文。在你还没说完一句话时，它已经在后台静默修正了前几秒的识别错误。
-2.  **极致克制审美**：
-    -   纯正暗色主题，彻底杜绝“科技蓝”渐变。
-    -   **西瓜红 (#d9234a)** 三倍大录音按钮，作为视觉指挥核心。
-    -   ChatGPT 同款极简侧边栏折叠逻辑，最大化文字展示空间。
-3.  **智能历史管理**：
-    -   **文本即标题**：侧边栏自动截取转录正文前 20 字作为标题。
-    -   **单会话聚焦**：重启录音即自动清场，让主视野永远保持纯净。
-4.  **全局智能响应 (桌面大一统)**：
-    -   **全平台接管**：长按 `Ctrl` 不松开即可在任意窗口（如微信、Word）激发言语录音，松手即完成发送。
-    -   **文本注入 (Type Text)**：内置 `pyautogui` 打字机引擎，语音转化不仅可搜网页、记笔记，还能自动回车发送到焦点输入框。
-4.  **工业级底座**：
-    -   基于 `Faster-Whisper` 模型，支持 CUDA 加速。
-    -   内置 OpenCC 繁简转换。
-    -   自动化 CUDA 环境探测，解决 Windows 下的 DLL 依赖噩梦。
+2. 创建虚拟环境并安装依赖：
 
-## 技术架构
-
--   **Backend**: Flask (Python) + SQLite
--   **Inference**: Faster-Whisper (ctranslate2)
--   **Frontend**: Vanilla JS + CSS3 (No Frameworks, No Bloat)
--   **Storage**: 句子级缓冲机制 (Session State)
-
-## 快速起步
-
-### 1. 本地虚拟环境 (强制约束)
-切勿使用全局 Python 安装，务必通过 `venv` 执行严格隔离以防包冲突：
 ```bash
 python -m venv venv
 venv\Scripts\activate
-
-# 若 pip 安装卡顿，请主动切换镜像源：
-pip install -r flask_app/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-> **避坑Tips**：如果遇到音频抓取报错或 `pystray` 等库异常，请直接钻进 `venv/Lib/site-packages` 查阅目标包源码追踪问题，切勿强行缝合。
-
-### 2. 核心凭证注入
-将开放的 LLM 大脑配置在根目录下的 `.env` 文档中：
-```
-OPENROUTER_API_KEY=your_api_key_here
+pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-### 3. 一键挂载所有服务
-直接双击运行项目根目录脚本（或在终端执行）：
+3. 下载模型权重，国内用 ModelScope 最快：
+
 ```bash
-just_run.bat
+pip install modelscope
+modelscope download --model Qwen/Qwen3-ASR-0.6B --local_dir ./models/Qwen3-ASR-0.6B
 ```
-它将静默唤起两个进程：
-1. **Flask 服务**：提供 `http://127.0.0.1:5000` 极简操控前端面板。
-2. **托盘探测器 (`desktop_agent.py`)**：并在 Windows 右下角挂载灰色常驻圆点。
 
-## 新增功能 (2026-05-03)
+权重放到 `models/Qwen3-ASR-0.6B/` 后自动使用本地路径，启动时不再联网。目录不存在会回落到 HuggingFace 自动下载。
 
-### 安全性增强
-- API Key 已从代码中移除，统一使用环境变量管理
-- 敏感信息不再硬编码
+4. 以管理员身份双击 `just_run.bat`。全局热键需要管理员权限。
 
-### 日志系统
-- 完整的日志记录系统，支持文件和控制台双输出
-- 日志自动轮转，单文件最大 10MB
-- 分类日志：应用日志、转录日志、数据库日志
+启动后服务默认在 `http://127.0.0.1:6100`，端口被占用时会自动顺延并打印真实端口。
 
-### 数据库优化
-- 使用 Flask g 对象管理数据库连接生命周期
-- 自动重试机制，最多重试 3 次
-- 连接池管理，避免频繁创建连接
+## 使用
 
-### 资源管理
-- 自动清理超过 30 天的音频和转录文件
-- SESSION_STATE 内存缓存自动过期清理（1小时）
-- 防止内存泄漏和磁盘空间耗尽
+### 网页转录
 
-### 错误处理
-- 完善的异常捕获和错误提示
-- 详细的错误日志记录
-- 用户友好的错误信息返回
+打开 `http://127.0.0.1:6100`，点话筒或按空格开始。首次启动会在后台加载模型，界面显示加载进度，约 8 秒后可录音。
 
-## 操控流
+### 桌面语音输入
 
--   **页面交互**：点击极简主控西瓜红按钮开始转录；点击复制全部按钮呈现原地视觉反馈。
--   **系统级唤醒 (推荐)**：在任何窗口下，直接按住屏幕键盘 `Ctrl` 键不松开开讲，松手自动拦截封板执行智能意图（如搜索、记笔记或焦点注入）。
+在任意窗口双击 Ctrl 开始说话，再双击一次、按 Esc、或说完静音约 1 秒自动结束。识别结果直接输入到当前焦点位置。终端内自动回车，适合 `opencode` 这类命令行工具。
 
----
+### 局域网 API
 
-> “极致的克制，就是最高的效率。”
+启动时自动在独立线程监听 `0.0.0.0:6101`，终端会打印访问地址与密钥：
+
+```
+  局域网 API 已就绪，同网段的 Mac / 手机可直接调用：
+    地址: http://192.168.0.107:6101/api/v1
+    密钥: xxxxxxxxxxxxxxxxxxxxxxxx
+    请求头: X-API-Key
+```
+
+```bash
+curl -X POST http://你的内网IP:6101/api/v1/transcribe \
+  -H "X-API-Key: 你的密钥" \
+  -F "audio=@录音.wav" -F "language=zh"
+```
+
+完整接口、错误码与调用示例见 [docs/API.md](docs/API.md)。
+
+## 配置
+
+常用环境变量，写在系统环境或 `.env`：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `ASR_SERVER_PORT` | 6100 | 网页服务端口 |
+| `ASR_LAN_API` | 1 | 设为 0 关闭局域网 API 线程 |
+| `ASR_LAN_PORT` | 6101 | 局域网 API 端口 |
+| `ASR_API_KEY` | 自动生成 | 固定 API 密钥，留空则生成并保存到 `src/recordings/.lan_api_key` |
+| `ASR_AUDIT` | 0 | 设为 1 时后台用 LLM 对照识别结果，只写审计日志，不改显示文本 |
+| `ASR_PRELOAD` | 1 | 设为 0 跳过模型预热，测试时用 |
+
+桌面代理参数在 `src/desktop_agent.py` 顶部：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `SILENCE_AUTO_STOP` | 1.0 秒 | 静音多久自动结束 |
+| `DOUBLE_TAP_INTERVAL` | 0.42 秒 | 两次 Ctrl 的最大间隔 |
+| `AUTO_ENTER_IN_TERMINAL` | True | 终端内注入后自动回车 |
+| `TYPEWRITE_ASCII` | True | 纯英文走逐字敲击，不碰剪贴板 |
+
+LLM 凭证可选，默认不参与出字。需要审计时在 `.env` 配置 `OPENROUTER_API_KEY` 和 `NVIDIA_API_KEY`。
+
+## 性能
+
+RTX 3060 实测：4.2 秒音频识别约 0.7 至 1.1 秒，停止收尾 8 至 18 毫秒，桌面代理松手到注入约 1.7 至 2.1 秒。
+
+## 项目结构
+
+```
+just_run.bat          启动入口
+run_all.py            进程管理与端口探测
+src/app.py            网页服务入口
+src/lan_server.py     局域网 API 线程
+src/services.py       模型加载与推理
+src/desktop_agent.py  全局语音输入代理
+src/routes/           网页、会话、记录、API 路由
+src/templates/        单文件前端
+src/recordings/       录音、转录、数据库，已忽略入库
+models/               本地模型权重，已忽略入库
+tests/                测试
+docs/                 接口文档
+```
+
+## 测试
+
+```bash
+python tests/test_desktop_agent.py
+python tests/test_inject.py
+python tests/test_ui_contract.py
+python tests/test_ui_static.py
+python tests/test_api.py
+python tests/test_path_traversal.py
+python tests/test_session_guard.py
+```
+
+## 已知限制
+
+1. 全局热键依赖 `keyboard` 库，部分安全软件或高权限进程可能拦截。
+2. 局域网 API 没有 TLS，只适合可信内网。
+3. 推理串行，多人同时请求会排队，详见 [docs/API.md](docs/API.md)。

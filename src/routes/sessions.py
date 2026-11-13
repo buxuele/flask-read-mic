@@ -1,12 +1,35 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 import os
+import re
 import shutil
-from config import AUDIO_DIR, TRANSCRIPT_DIR
+import threading
+from config import AUDIO_DIR, AUDIT_DIR, AUDIT_ENABLED, TRANSCRIPT_DIR
 from database import get_db
 from pydub import AudioSegment
 
 sessions_bp = Blueprint('sessions', __name__)
+
+
+def format_clock(raw):
+    """'20260930_085305_168979' 或 '%Y-%m-%d %H:%M:%S' -> '08:53:05'"""
+    if not raw:
+        return ''
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d_%H%M%S_%f"):
+        try:
+            return datetime.strptime(raw[:26], fmt).strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    return raw
+
+
+def format_day(raw):
+    """'2026-09-30 08:53:05' -> '9月30日 08:53'"""
+    try:
+        dt = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return raw or ''
+    return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
 
 @sessions_bp.route('/session/start', methods=['POST'])
 def start_session():
@@ -54,34 +77,56 @@ def finalize_session(session_id):
     conn.commit()
 
     full_text = session['full_text'] or ''
-    
-    # 增加后期处理：LLM 修复转录结果 (语句、标点)
-    if full_text.strip():
-        try:
-            import sys
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            if root_dir not in sys.path:
-                sys.path.append(root_dir)
-            from llm import process_text
-            
-            fixed_text = process_text(full_text)
-            if fixed_text and fixed_text != full_text:
-                full_text = fixed_text
-                conn.execute("UPDATE sessions SET full_text = ? WHERE session_id = ?", (full_text, session_id))
-                conn.commit()
-        except Exception as e:
-            print(f"LLM Post-processing failed: {e}")
 
     full_text_file = os.path.join(TRANSCRIPT_DIR, f'{session_id}_full.txt')
-    with open(full_text_file, 'w', encoding='utf-8') as f:
-        f.write(f'会话: {session_id}\n')
-        f.write(f'开始时间: {session["start_time"]}\n')
-        f.write(f'结束时间: {end_time}\n')
-        f.write(f'片段数: {session["segment_count"]}\n')
-        f.write(f'\n完整转录内容:\n{full_text.strip()}\n')
 
+    def write_full_file(content):
+        with open(full_text_file, 'w', encoding='utf-8') as f:
+            f.write(f'会话: {session_id}\n')
+            f.write(f'开始时间: {session["start_time"]}\n')
+            f.write(f'结束时间: {end_time}\n')
+            f.write(f'片段数: {session["segment_count"]}\n')
+            f.write(f'\n完整转录内容:\n{content.strip()}\n')
+
+    write_full_file(full_text)
     conn.close()
+
+    # 默认完全不调用 LLM。开启审计时也只在后台对照，绝不改写出字结果。
+    if AUDIT_ENABLED and full_text.strip():
+        threading.Thread(
+            target=_audit_async,
+            args=(session_id, full_text),
+            daemon=True,
+        ).start()
+
     return jsonify({'success': True, 'full_text': full_text})
+
+
+def _audit_async(session_id, asr_text):
+    """后台准确度对照：把 ASR 原文与 LLM 校对结果并排写入审计日志。
+    只用于事后分析，不写数据库、不改全文文件、不影响任何显示。"""
+    import json
+    import os
+    from datetime import datetime
+
+    from llm import process_text
+
+    llm_text = process_text(asr_text)
+    if not llm_text or llm_text == asr_text:
+        return
+
+    os.makedirs(AUDIT_DIR, exist_ok=True)
+    record = {
+        'session_id': session_id,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'asr_chars': len(asr_text),
+        'llm_chars': len(llm_text),
+        'asr_text': asr_text,
+        'llm_text': llm_text,
+    }
+    path = os.path.join(AUDIT_DIR, f"audit_{datetime.now():%Y%m%d}.jsonl")
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(record, ensure_ascii=False) + '\n')
 
 @sessions_bp.route('/sessions', methods=['GET'])
 def get_sessions():
@@ -99,21 +144,25 @@ def get_sessions():
 
     result = []
     for s in sessions:
-        segs = records_by_session.get(s['session_id'], [])
-        
-        # 将后端时间直接美化并发送
-        try:
-            dt = datetime.strptime(s['start_time'], "%Y-%m-%d %H:%M:%S")
-            fmt_time = f"{dt.month}月{dt.day}日 {dt.strftime('%H:%M:%S')}"
-        except:
-            fmt_time = s['start_time']
+        segs = sorted(
+            records_by_session.get(s['session_id'], []),
+            key=lambda r: r['segment_index'],
+        )
+        for r in segs:
+            r['time_label'] = format_clock(r['timestamp'])
+
+        full_text = s['full_text'] or ''
+        # 误点一下就产生的空会话不进历史列表，避免垃圾数据堆积
+        if not segs and not full_text.strip():
+            continue
 
         result.append({
             'session_id': s['session_id'],
-            'start_time': fmt_time,
-            'end_time': s['end_time'] or '',
+            'start_time': format_day(s['start_time']),
+            'end_time': format_clock(s['end_time']) if s['end_time'] else '',
             'segment_count': len(segs),
-            'full_text': s['full_text'] or '',
+            'char_count': len(full_text.replace(' ', '')),
+            'full_text': full_text,
             'merged_audio': s['merged_audio'],
             'segments': segs
         })
@@ -122,7 +171,18 @@ def get_sessions():
 
 @sessions_bp.route('/session/<session_id>', methods=['DELETE'])
 def delete_session(session_id):
+    # session_id 来自 URL，必须白名单校验；否则 DELETE /session/.. 会把整个数据目录删掉
+    if not re.fullmatch(r'[A-Za-z0-9_\-]{1,64}', session_id):
+        return jsonify({'error': '非法的会话 ID'}), 400
+
     conn = get_db()
+    session = conn.execute(
+        "SELECT session_id FROM sessions WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    if not session:
+        conn.close()
+        return jsonify({'error': '会话不存在'}), 404
+
     records = conn.execute("SELECT * FROM records WHERE session_id = ?", (session_id,)).fetchall()
 
     for record in records:
