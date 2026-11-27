@@ -18,7 +18,9 @@
 
 1. 服务端先启动，记下终端打印的局域网地址与密钥。
 2. brew install portaudio
-3. cd client && cp .env.example .env，填地址与密钥，再执行 ./just_run.sh
+3. cp client/.env.example client/.env，填地址与密钥，然后在仓库根目录执行 ./just_run.sh
+
+仓库根目录的 just_run.sh 是 macOS 客户端入口，内部转到 client/just_run.sh。Windows 服务器入口仍是 just_run.bat。
 
 细节见 [client/README.md](client/README.md)，接口协议见 [docs/API.md](docs/API.md)。
 

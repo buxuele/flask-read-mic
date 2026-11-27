@@ -7,21 +7,27 @@ import sounddevice as sd
 
 
 class Segmenter:
-    def __init__(self, rate=16000, min_chunk=1.5, max_chunk=12.0, silence_gap=0.8, pad=0.25, threshold=500):
+    def __init__(self, rate=16000, min_chunk=1.5, max_chunk=10.0, silence_gap=0.5, pad=0.25, threshold=250):
         self.rate = rate
         self.min_chunk = min_chunk
         self.max_chunk = max_chunk
         self.silence_gap = silence_gap
         self.pad = pad
         self.threshold = threshold
+        self.hard_max = max_chunk + 3.0
         self.blocks = []
         self.silence = 0.0
         self.speech = False
+        self.speech_peak = 0
 
     def reset(self):
         self.blocks = []
         self.silence = 0.0
         self.speech = False
+        self.speech_peak = 0
+
+    def quiet_line(self):
+        return max(self.threshold, int(self.speech_peak * 0.15))
 
     def feed(self, block):
         block = block.reshape(-1, 1) if block.ndim == 1 else block
@@ -33,6 +39,7 @@ class Segmenter:
 
         if peak >= self.threshold:
             self.speech = True
+            self.speech_peak = max(self.speech_peak, peak)
             self.silence = 0.0
             self.blocks.append(block)
         elif self.speech:
@@ -42,7 +49,11 @@ class Segmenter:
                 out.append(self.cut())
 
         if self.speech and self.length() >= self.max_chunk:
-            out.append(self.cut())
+            head = self.cut_at_pause()
+            if head is not None:
+                out.append(head)
+            elif self.length() >= self.hard_max:
+                out.append(self.cut_at_quiet())
         return out
 
     def length(self):
@@ -66,19 +77,64 @@ class Segmenter:
         return self.cut()
 
     def is_quiet(self, block):
-        return int(np.abs(block).max()) < self.threshold
+        return int(np.abs(block).max()) < self.quiet_line()
+
+    def cut_at_pause(self):
+        window = int(2.5 * self.rate)
+        total = sum(len(block) for block in self.blocks)
+        start = max(0, total - window)
+        offset = 0
+        boundary = None
+        for index, block in enumerate(self.blocks):
+            offset += len(block)
+            if offset >= start and self.is_quiet(block):
+                boundary = index + 1
+        if boundary is not None and boundary < len(self.blocks):
+            head = np.concatenate(self.blocks[:boundary])
+            self.blocks = self.blocks[boundary:]
+            self.silence = 0.0
+            return head
+        return None
+
+    def cut_at_quiet(self):
+        window = int(0.8 * self.rate)
+        total = sum(len(block) for block in self.blocks)
+        if total <= window:
+            return self.cut()
+        tail_start = total - window
+        offset = 0
+        best_index = len(self.blocks)
+        best_peak = None
+        for index, block in enumerate(self.blocks):
+            if offset >= tail_start:
+                peak = int(np.abs(block).max())
+                if best_peak is None or peak < best_peak:
+                    best_peak = peak
+                    best_index = index
+            offset += len(block)
+        if best_index == len(self.blocks):
+            return self.cut()
+        head = np.concatenate(self.blocks[:best_index]) if best_index else None
+        rest = self.blocks[best_index:]
+        self.blocks = rest
+        self.silence = 0.0
+        if head is None:
+            return self.cut()
+        return head
 
 
 class Recorder:
-    def __init__(self, rate=16000, device=None, threshold=500, silence_gap=0.8, on_chunk=None):
+    def __init__(self, rate=16000, device=None, threshold=500, silence_gap=0.8, on_chunk=None, emit_chunks=True):
         self.rate = rate
         self.device = device
         self.threshold = threshold
         self.on_chunk = on_chunk
+        self.emit_chunks = emit_chunks
         self.segmenter = Segmenter(rate=rate, threshold=threshold, silence_gap=silence_gap)
         self.stream = None
         self.lock = threading.Lock()
         self.ready = []
+        self.session = []
         self.frames = 0
         self.sum_sq = 0.0
 
@@ -94,6 +150,7 @@ class Recorder:
         device = self.resolve_device()
         with self.lock:
             self.ready = []
+            self.session = []
             self.frames = 0
             self.sum_sq = 0.0
             self.segmenter.reset()
@@ -102,10 +159,11 @@ class Recorder:
             block = indata.copy()
             with self.lock:
                 self.frames += len(block)
+                self.session.append(block)
                 samples = block.astype("float32")
                 self.sum_sq += float(np.sum(samples * samples))
                 finished = self.segmenter.feed(block)
-            if self.on_chunk is None:
+            if self.on_chunk is None or not self.emit_chunks:
                 with self.lock:
                     self.ready.extend(finished)
                 return
@@ -137,20 +195,37 @@ class Recorder:
             chunks, self.ready = self.ready, []
             final = self.segmenter.flush()
             frames, sum_sq = self.frames, self.sum_sq
+            session, self.session = self.session, []
         if final is not None:
             chunks.append(final)
         seconds = frames / self.rate
         rms = float(np.sqrt(sum_sq / frames)) if frames else 0.0
-        return [self.pack(chunk) for chunk in chunks], seconds, rms
+        full = to_wav(np.concatenate(session), self.rate) if session else None
+        return [self.pack(chunk) for chunk in chunks], seconds, rms, full
 
     def drop(self):
         with self.lock:
             stream, self.stream = self.stream, None
             self.ready = []
+            self.session = []
             self.segmenter.reset()
         if stream is not None:
             stream.stop()
             stream.close()
+
+    def read_since(self, seconds):
+        with self.lock:
+            blocks = list(self.session)
+            frames = self.frames
+        if not blocks:
+            return np.zeros((0, 1), dtype="int16"), frames / self.rate
+        data = np.concatenate(blocks)
+        start = min(int(max(seconds, 0.0) * self.rate), len(data))
+        return data[start:], frames / self.rate
+
+    @property
+    def silence_seconds(self):
+        return self.segmenter.silence
 
     def pack(self, chunk):
         seconds = len(chunk) / self.rate

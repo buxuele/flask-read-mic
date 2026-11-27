@@ -1,4 +1,5 @@
 import threading
+import time
 
 import requests
 
@@ -23,7 +24,7 @@ def transcribe(wav_bytes, language=None, context=None):
     if not config.ASR_KEY:
         raise RuntimeError("未配置 ASR_KEY")
 
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             response = session().post(
                 f"{config.ASR_URL}/transcribe",
@@ -32,10 +33,19 @@ def transcribe(wav_bytes, language=None, context=None):
                 data=_form(language, context),
                 timeout=(5, 60),
             )
-            break
         except (requests.ConnectionError, requests.Timeout):
-            if attempt == 1:
+            if attempt == 2:
                 raise
+            time.sleep(0.8)
+            continue
+        if response.status_code in (429, 503) and attempt < 2:
+            try:
+                wait = float(response.headers.get("Retry-After", "2"))
+            except ValueError:
+                wait = 2.0
+            time.sleep(min(wait, 4.0))
+            continue
+        break
     if response.status_code != 200:
         try:
             detail = response.json().get("error", "")

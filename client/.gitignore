@@ -5,3 +5,4 @@ logs/app.lock
 __pycache__/
 *.pyc
 .DS_Store
+recordings/

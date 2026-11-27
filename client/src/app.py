@@ -41,6 +41,7 @@ from asr import health, transcribe
 from controller import Controller
 from paste import paste_text
 from recorder import Recorder, list_input_devices
+from store import Store
 
 ICONS = {
     "idle": ("mic", None),
@@ -74,11 +75,13 @@ class MicApp(NSObject):
         if self is None:
             return None
         self.last_error = ""
+        self.last_paste_at = 0.0
         self.monitor = None
         self.ctrl_down = False
         self.health = ""
         self.health_at = 0.0
         self.error_timer = None
+        store = Store(config.RECORD_DIR) if config.SAVE_AUDIO else None
         self.controller = Controller(
             recorder=Recorder(
                 rate=config.SAMPLE_RATE,
@@ -94,6 +97,8 @@ class MicApp(NSObject):
             max_seconds=config.MAX_SECONDS,
             audio_limit=config.AUDIO_LIMIT,
             min_rms=config.MIN_RMS,
+            store=store,
+            on_verify=self._on_verify,
         )
         return self
 
@@ -135,6 +140,11 @@ class MicApp(NSObject):
         self.copy_item.setEnabled_(False)
         menu.addItem_(self.last_item)
         menu.addItem_(self.copy_item)
+        self.verify_item = self._disabled_item("复核：未运行")
+        self.verify_copy_item = self._menu_item("复制复核结果", "copyVerify:")
+        self.verify_copy_item.setEnabled_(False)
+        menu.addItem_(self.verify_item)
+        menu.addItem_(self.verify_copy_item)
         menu.addItem_(self._menu_item("测试粘贴", "testPaste:"))
         menu.addItem_(NSMenuItem.separatorItem())
 
@@ -149,6 +159,7 @@ class MicApp(NSObject):
         menu.addItem_(language_item)
         menu.addItem_(NSMenuItem.separatorItem())
 
+        menu.addItem_(self._menu_item("打开录音目录", "openRecords:"))
         menu.addItem_(self._menu_item("打开日志", "openLog:"))
         menu.addItem_(self._menu_item("打开隐私设置", "openPrivacy:"))
         menu.addItem_(NSMenuItem.separatorItem())
@@ -196,6 +207,12 @@ class MicApp(NSObject):
             item.setRepresentedObject_(code)
             item.setState_(1 if config.LANGUAGE == code else 0)
             self.language_menu.addItem_(item)
+
+    @python_method
+    def _on_verify(self, text, matched):
+        prefix = "复核：一致" if matched else "复核：有差异，可复制"
+        AppHelper.callAfter(self.verify_item.setTitle_, prefix)
+        AppHelper.callAfter(self.verify_copy_item.setEnabled_, not matched)
 
     @python_method
     def _refresh_menu(self):
@@ -312,10 +329,14 @@ class MicApp(NSObject):
             log.error("没有辅助功能权限，无法模拟 Cmd+V")
             self._flash_error()
             return
+        wait = 0.15 - (time.monotonic() - self.last_paste_at)
+        if wait > 0:
+            time.sleep(wait)
         self.last_error = ""
         target = NSWorkspace.sharedWorkspace().frontmostApplication()
         target_name = target.localizedName() if target else "当前窗口"
         paste_text(text)
+        self.last_paste_at = time.monotonic()
         log.info("已粘贴到 %s（%.1fs）：%s", target_name, elapsed, text)
 
     @python_method
@@ -382,6 +403,14 @@ class MicApp(NSObject):
         paste_text("粘贴测试：能看到这行字说明自动输入可用。", restore_delay=1.2)
         log.info("已发送测试粘贴")
 
+    def copyVerify_(self, sender):
+        text = self.controller.last_verify
+        if not text:
+            return
+        board = NSPasteboard.generalPasteboard()
+        board.clearContents()
+        board.setString_forType_(text, NSPasteboardTypeString)
+
     def copyLast_(self, sender):
         text = self.controller.last_text
         if not text:
@@ -389,6 +418,10 @@ class MicApp(NSObject):
         board = NSPasteboard.generalPasteboard()
         board.clearContents()
         board.setString_forType_(text, NSPasteboardTypeString)
+
+    def openRecords_(self, sender):
+        config.RECORD_DIR.mkdir(parents=True, exist_ok=True)
+        NSWorkspace.sharedWorkspace().openFile_(str(config.RECORD_DIR))
 
     def openLog_(self, sender):
         NSWorkspace.sharedWorkspace().openFile_(str(config.LOG_DIR / "app.log"))

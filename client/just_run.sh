@@ -21,5 +21,10 @@ if [[ ! -f .venv/.reqhash || "$(cat .venv/.reqhash)" != "$HASH" ]]; then
   echo "$HASH" > .venv/.reqhash
 fi
 
+if [[ ! -f .env ]]; then
+  echo "缺少 .env，先执行：cp .env.example .env，再填入 ASR_URL 与 ASR_KEY"
+  exit 1
+fi
+
 mkdir -p logs
 exec .venv/bin/python src/app.py

@@ -42,9 +42,9 @@ SAMPLE_RATE = 16000
 MIN_SECONDS = 0.3
 MAX_SECONDS = 280
 AUDIO_LIMIT = 295
-MIN_RMS = float(os.environ.get("MIN_RMS", "40") or 40)
-CHUNK_THRESHOLD = int(os.environ.get("CHUNK_THRESHOLD", "500") or 500)
-CHUNK_SILENCE = float(os.environ.get("CHUNK_SILENCE", "0.6") or 0.6)
+MIN_RMS = float(os.environ.get("MIN_RMS", "20") or 20)
+CHUNK_THRESHOLD = int(os.environ.get("CHUNK_THRESHOLD", "250") or 250)
+CHUNK_SILENCE = float(os.environ.get("CHUNK_SILENCE", "0.4") or 0.4)
 LANGUAGES = [("zh", "中文"), ("en", "英文"), ("auto", "自动")]
 
 _raw_device = os.environ.get("MIC_DEVICE", "").strip()
@@ -56,3 +56,9 @@ else:
     MIC_DEVICE = _raw_device
 
 LOG_DIR = ROOT / "logs"
+RECORD_DIR = ROOT / "recordings"
+SAVE_AUDIO = os.environ.get("SAVE_AUDIO", "1") == "1"
+STREAM_MODE = os.environ.get("STREAM_MODE", "pause")
+STREAM_STEP = float(os.environ.get("STREAM_STEP", "0.5") or 0.5)
+STREAM_WINDOW = float(os.environ.get("STREAM_WINDOW", "6") or 6)
+STREAM_HOLDBACK = int(os.environ.get("STREAM_HOLDBACK", "4") or 4)

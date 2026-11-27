@@ -4,6 +4,8 @@
 2. cp .env.example .env，填入服务端地址与密钥
 3. ./just_run.sh
 
+在仓库根目录执行 ./just_run.sh 效果相同，那是 macOS 客户端入口。
+
 按住 Ctrl 说话，松开后文字自动粘贴到光标处。
 
 ## 简介
@@ -12,7 +14,7 @@
 
 ## 功能
 
-1. 按住 Ctrl 录音，停顿 0.6 秒切一句，切出立刻上传，不用等整段说完。
+1. 按住 Ctrl 录音，停顿 0.4 秒切一句，切出立刻上传；连续说不停时最多等 10 秒，优先在最近 2.5 秒里的自然停顿处切。
 2. 三路并发上传，结果按说话顺序粘贴；连接复用，不反复握手。
 3. 每句带上一句的识别结果作为前文提示，专有名词更准。
 4. Ctrl 加其他键不触发，Ctrl+C、Ctrl+V 照常用。
@@ -20,9 +22,9 @@
 6. 菜单里能看接口连通性、麦克风与辅助功能权限、最近一条识别结果，可一键复制。
 7. 菜单里能切换麦克风和识别语言，选择写回 .env。
 8. 上传前裁掉首尾静音；录音最长 280 秒自动结束。
-9. 录音过短、没有声音、接口报错、识别为空都不粘贴。
-10. 粘贴后恢复原剪贴板，期间你复制了新内容就不覆盖。
-11. 网络断开或超时自动重试一次。
+10. 录音过短、没有声音、接口报错、识别为空都不粘贴。
+11. 粘贴后恢复原剪贴板，期间你复制了新内容就不覆盖。
+12. 网络断开或超时自动重试一次。
 
 ## 服务端
 
@@ -44,9 +46,23 @@
 | ASR_KEY | 服务密钥 |
 | LANGUAGE | zh、en、auto，默认 zh |
 | MIC_DEVICE | 麦克风名称片段或序号，留空用系统默认 |
-| MIN_RMS | 音量门限，低于该值视为没说话，默认 40 |
-| CHUNK_THRESHOLD | 断句振幅门限，超过视为说话，默认 500 |
-| CHUNK_SILENCE | 停顿多少秒算一句结束，默认 0.6 |
+| MIN_RMS | 片段音量下限，低于该值丢弃，默认 20 |
+| CHUNK_THRESHOLD | 断句振幅下限，超过视为说话，默认 250 |
+| CHUNK_SILENCE | 停顿多少秒算一句结束，默认 0.4 |
+| SAVE_AUDIO | 是否保存每段录音与识别结果，默认 1 |
+| STREAM_MODE | pause 或 agreement，默认 pause；agreement 需要服务端放宽限流 |
+
+## 录音数据
+
+每次说话都会存一份原始 wav 和同名 json，放在 client/recordings/日期/ 下。json 里有总时长、各片段时长与音量、每段识别文本与耗时。菜单里的「打开录音目录」可以直接打开。
+
+不需要时把 SAVE_AUDIO 设为 0，或者直接删 recordings 目录。这个目录不进版本库。
+
+## 与系统听写冲突
+
+macOS 默认听写快捷键是连按两下 Control，和本工具的按住 Control 会撞车：系统听写会被一起唤起，两边抢麦克风，输入框里出现重复或串字。
+
+处理办法：系统设置 → 键盘 → 听写，关掉听写，或者把快捷键改成按两下 Fn。
 
 ## 权限
 
@@ -56,13 +72,17 @@
 
 ## 开发
 
+完整的过程、取舍和实测数据见 [docs/开发过程.md](docs/开发过程.md)，接下来要做的重叠切片流式方案见 [docs/流式切片方案.md](docs/流式切片方案.md)。
+
 1. 运行：just_run.sh 会创建 .venv、装依赖、启动菜单栏进程，终端保持占用。
 2. 测试：全部用合成音频，不占用麦克风和扬声器。
 
 ```
 .venv/bin/python tests/test_controller.py
 .venv/bin/python tests/test_segmenter.py
-.venv/bin/python tests/test_stream.py
+.venv/bin/python tests/test_stream_mode.py
+.venv/bin/python tests/test_chunk_api.py
+.venv/bin/python tests/test_store.py
 .venv/bin/python tests/test_asr.py
 .venv/bin/python tests/test_clipboard.py
 .venv/bin/python tests/test_paste.py

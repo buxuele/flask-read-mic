@@ -25,13 +25,13 @@ class FakeRecorder:
         return chunks
 
     def stop(self):
-        return self.stop_chunks, self.seconds, self.rms
+        return self.stop_chunks, self.seconds, self.rms, b"full-wav"
 
     def drop(self):
         self.dropped = True
 
 
-def build(recorder, asr=None):
+def build(recorder, asr=None, store=None, on_verify=None):
     events = []
     controller = Controller(
         recorder=recorder,
@@ -43,6 +43,8 @@ def build(recorder, asr=None):
         max_seconds=280,
         audio_limit=295,
         min_rms=40,
+        store=store,
+        on_verify=on_verify,
     )
     return controller, events
 
@@ -58,6 +60,62 @@ def wait(controller):
 
 def texts(events):
     return [payload for kind, payload in events if kind == "text"]
+
+
+def test_verify_pass_runs():
+    seen = []
+
+    def asr(wav, ctx):
+        if wav == b"full-wav":
+            return "整段复核结果"
+        return "片段结果"
+
+    recorder = FakeRecorder(seconds=6.0)
+    controller, events = build(recorder, asr=asr, on_verify=lambda text, matched: seen.append((text, matched)))
+    controller.press()
+    controller.release()
+    wait(controller)
+    deadline = time.time() + 3
+    while time.time() < deadline and not seen:
+        time.sleep(0.02)
+    assert seen == [("整段复核结果", False)], seen
+    assert controller.last_verify == "整段复核结果"
+
+
+def test_verify_skipped_for_long_audio():
+    seen = []
+    controller, events = build(
+        FakeRecorder(seconds=30.0),
+        on_verify=lambda text, matched: seen.append(text),
+    )
+    controller.press()
+    controller.release()
+    wait(controller)
+    time.sleep(0.3)
+    assert seen == []
+
+
+def test_store_saves_session():
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path as _Path
+    from store import Store
+
+    root = _Path(tempfile.mkdtemp())
+    try:
+        controller, events = build(FakeRecorder(), store=Store(root))
+        controller.press()
+        controller.release()
+        wait(controller)
+        files = list(root.rglob("*.wav"))
+        assert len(files) == 1, files
+        meta_file = files[0].with_suffix(".json")
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        assert meta["seconds"] == 1.2
+        assert meta["chunks"][0]["text"] == "测试文本"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_normal_hold():
@@ -157,6 +215,28 @@ def test_short_press_discarded():
     wait(controller)
     assert texts(events) == []
     assert not any(kind == "error" for kind, _ in events)
+
+
+def test_quiet_chunk_still_sent():
+    controller, events = build(FakeRecorder(rms=5.0))
+    controller.press()
+    controller.release()
+    wait(controller)
+    assert texts(events) == ["测试文本"]
+
+
+def test_empty_text_retried():
+    calls = []
+
+    def asr(wav, ctx):
+        calls.append(1)
+        return "" if len(calls) == 1 else "第二次有字"
+
+    controller, events = build(FakeRecorder(), asr=asr)
+    controller.press()
+    controller.release()
+    wait(controller)
+    assert texts(events) == ["第二次有字"]
 
 
 def test_silence_discarded():
