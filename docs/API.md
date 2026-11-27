@@ -108,9 +108,10 @@ Get-Content src\recordings\.lan_api_key
 3. 请求格式：`multipart/form-data`。
 4. 音频字段名必须是 `audio`。
 5. 支持格式：wav、webm、mp3、m4a、ogg、flac。采样率和声道不限，服务端会转成 16kHz 单声道。
-6. 单次音频不超过 300 秒，请求体不超过 25MB。
-7. 语言字段可选：`zh`、`en`、`auto`，默认 `auto`。
-8. 上下文提示可选：`context`，最多 1000 字，用于提升专有名词准确率。
+6. 也支持裸 PCM：字段 `format=pcm`，Content-Type 用 `application/octet-stream`，内容是 16kHz 单声道 int16 小端。这种方式跳过解码，比 wav 快约 0.12 秒，适合自己控制的录音端。
+7. 单次音频不超过 300 秒，请求体不超过 25MB。
+8. 语言字段可选：`zh`、`en`、`auto`，默认 `auto`。固定 `zh` 可以省掉语种判别。
+9. 上下文提示可选：`context`，最多 1000 字，用于提升专有名词准确率。
 
 ### Mac
 
@@ -161,6 +162,30 @@ for f in *.m4a; do
     -H "X-API-Key: 你的密钥" \
     -F "audio=@$f" -F "language=zh" | python3 -c "import sys,json;print(json.load(sys.stdin)['text'])"
 done
+```
+
+### 裸 PCM 上传
+
+如果录音端本来就产出 PCM，可以直接发原始数据，跳过服务端解码。
+
+要求：16kHz、单声道、int16 小端。字段 `format=pcm`，Content-Type 用 `application/octet-stream`。
+
+```python
+import numpy as np
+import requests
+import soundfile as sf
+
+data, sr = sf.read("录音.wav", dtype="float32")
+pcm = (np.clip(data, -1, 1) * 32767).astype("<i2").tobytes()
+
+r = requests.post(
+    "http://192.168.0.107:6101/api/v1/transcribe",
+    headers={"X-API-Key": "你的密钥"},
+    files={"audio": ("a.pcm", pcm, "application/octet-stream")},
+    data={"language": "zh", "format": "pcm"},
+    timeout=180,
+)
+print(r.json()["text"])
 ```
 
 ### iPhone
@@ -294,18 +319,27 @@ src/logs/transcribe_*.log
 
 ## 六、性能与并发
 
-单次推理约 1.1 秒，具体取决于音频长度和显卡性能。
+单次推理 1.8 秒音频约 0.55 秒，8 秒音频约 1.44 秒。
 
-当前定位单人使用。多个客户端同时请求时会排队，但不是显式队列，而是线程阻塞在推理锁上。实测三个客户端同时上传 4.2 秒音频，分别耗时 1.14 秒、1.78 秒、2.41 秒，总墙钟 2.62 秒。
+多个客户端同时请求时，不再在全局锁上逐条串行，而是进入推理队列，由单个工作线程在 20 毫秒窗口内攒批，一次批量推理。
 
-限制：
+实测 RTX 3060：
 
-1. 没有队列长度上限。
-2. 没有等待超时。
-3. 不保证先到先服务。
-4. 客户端断开后请求仍会执行完。
+1. 单次 1.8 秒音频：0.55 秒。
+2. 三个请求严格同时到达：总墙钟 0.62 秒，三个请求都在 0.62 秒返回。
+3. 三个请求间隔 50 毫秒到达：总墙钟 1.13 秒。
 
-多人并发需要改成有界队列，队列满返回 429，等待超时返回 503；或者改用 vLLM 批处理后端。
+作为对比，改造前三个请求串行相加约 1.87 秒。
+
+裸 PCM 上传比 wav 快约 0.12 秒，因为跳过了 ffmpeg 解码。
+
+仍然存在的限制：
+
+1. 队列没有长度上限，请求持续涌入时内存会增长。
+2. 批处理窗口只有 20 毫秒，间隔超过窗口的请求会进入下一批。
+3. 单批上限 4 条，超过部分排队等下一批。
+
+如果需要更高吞吐，可以改用 vLLM 批处理后端。
 
 ## 七、接口参考
 
@@ -315,9 +349,10 @@ src/logs/transcribe_*.log
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `audio` | 是 | 音频文件，支持 wav、webm、mp3、m4a、ogg、flac |
+| `audio` | 是 | 音频文件，支持 wav、webm、mp3、m4a、ogg、flac，或裸 PCM |
 | `language` | 否 | `zh`、`en`、`auto`，默认 `auto` |
 | `context` | 否 | 前文提示，最多 1000 字 |
+| `format` | 否 | 填 `pcm` 时按 16kHz 单声道 int16 小端解析 |
 
 成功响应：
 

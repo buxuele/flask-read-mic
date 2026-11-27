@@ -13,6 +13,7 @@ import time
 from collections import defaultdict
 from threading import Lock
 
+import numpy as np
 from flask import Blueprint, jsonify, request
 
 import config
@@ -128,10 +129,21 @@ def transcribe():
     if not raw:
         return jsonify({'error': '音频内容为空'}), 400
 
-    try:
-        samples = _decode_audio(raw)
-    except Exception as e:
-        return jsonify({'error': f'音频解码失败：{e}'}), 400
+    # 裸 PCM 跳过解码与重采样，客户端直接传 16kHz 单声道 int16 小端。
+    # 手机或脚本端录音本来就是 PCM，这一步能省掉一次 ffmpeg 解码。
+    wants_pcm = (
+        request.form.get('format') == 'pcm'
+        or file.mimetype in ('audio/pcm', 'audio/l16', 'application/octet-stream')
+    )
+    if wants_pcm:
+        if len(raw) % 2 != 0:
+            return jsonify({'error': 'PCM 字节数必须为偶数，int16 小端'}), 400
+        samples = np.frombuffer(raw, dtype='<i2').astype(np.float32) / 32768.0
+    else:
+        try:
+            samples = _decode_audio(raw)
+        except Exception as e:
+            return jsonify({'error': f'音频解码失败：{e}'}), 400
 
     duration = len(samples) / SAMPLE_RATE
     if duration > API_MAX_SECONDS:

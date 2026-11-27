@@ -60,7 +60,7 @@ MIN_SPEAKING_RMS = 0.006
 MIN_RECORD_SECONDS = 0.4
 MAX_RECORD_SECONDS = 30.0
 TRAILING_SILENCE_SECONDS = 0.35
-SILENCE_AUTO_STOP = 1.0         # 说完静音这么久自动收尾，越短越跟手，过长会让人觉得卡
+SILENCE_AUTO_STOP = 0.5         # 说完静音这么久自动收尾，越短越跟手，过长会让人觉得卡
 
 # ---------- 文本注入 ----------
 PASTE_SETTLE_SECONDS = 0.12

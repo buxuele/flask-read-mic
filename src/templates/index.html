@@ -1099,7 +1099,7 @@
         // 说完即切：不靠固定定时器空等，检测到停顿就立刻上传当前片段。
         // 阈值偏保守，避免环境噪声或呼吸声把一句话切碎。
         const VAD_RMS_THRESHOLD = 0.014;
-        const VAD_SILENCE_MS = 620;
+        const VAD_SILENCE_MS = 500;
         const VAD_MIN_SEGMENT_MS = 450;
         let lastVoiceAt = 0;
         let vadSegmentStart = 0;

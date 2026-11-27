@@ -1,14 +1,19 @@
 import os
+import queue
 import threading
+import time
+from concurrent.futures import Future
 
 import numpy as np
 
 from config import (
     ASR_BATCH_SIZE,
+    ASR_BATCH_WINDOW_SECONDS,
     ASR_DEVICE,
     ASR_DTYPE,
     ASR_MAX_NEW_TOKENS,
     ASR_MODEL_ID,
+    ASR_REQUEST_TIMEOUT,
     SAMPLE_RATE,
 )
 from logger import transcribe_logger
@@ -33,19 +38,22 @@ def to_simplified(text):
     return _CONVERTER.convert(text)
 
 
-_DTYPE_NAMES = ('bfloat16', 'float16', 'float32')
-
 STATUS_IDLE = 'idle'        # 尚未开始加载
 STATUS_LOADING = 'loading'  # 正在加载权重
 STATUS_WARMING = 'warming'  # 权重就绪，正在跑首次推理预热 CUDA kernel
 STATUS_READY = 'ready'      # 可用
 STATUS_ERROR = 'error'      # 加载失败
 
-_load_lock = threading.RLock()   # 用可重入锁，warmup 内部还会再调 get_model
-_infer_lock = threading.Lock()
+_load_lock = threading.RLock()
 _model = None
 _status = STATUS_IDLE
 _error = None
+
+# 推理队列：单工作线程 + 短窗口攒批。
+# 这样并发请求会被合并成一次批量推理，而不是在全局锁上串行排队。
+_queue = queue.Queue()
+_worker_lock = threading.Lock()
+_worker_started = False
 
 
 def model_status():
@@ -93,27 +101,87 @@ def get_model():
     return _model
 
 
-def preload_in_background():
-    """启动即后台预热。权重加载约 4 秒，首次推理预热约 13 秒，
-    两者都做完，第一次真实录音才能秒出结果。"""
-    global _status, _error
+def _ensure_worker():
+    global _worker_started
+    if _worker_started:
+        return
+    with _worker_lock:
+        if _worker_started:
+            return
+        threading.Thread(target=_batch_worker, name='asr-batch', daemon=True).start()
+        _worker_started = True
 
-    def worker():
-        global _status, _error
+
+def _collect_batch():
+    first = _queue.get()
+    batch = [first]
+    deadline = time.monotonic() + ASR_BATCH_WINDOW_SECONDS
+    while len(batch) < ASR_BATCH_SIZE:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            with _load_lock:
-                model = get_model()
-                _status = STATUS_WARMING
-                # 用 1 秒静音跑一次推理，把 CUDA kernel 编译成本提前付掉
-                transcribe_audio(np.zeros(SAMPLE_RATE, dtype=np.float32), language=None)
-            _status = STATUS_READY
-            transcribe_logger.info("模型已就绪，可以开始录音")
-        except Exception as e:
-            _status = STATUS_ERROR
-            _error = str(e)
-            transcribe_logger.error(f"模型预热失败: {e}")
+            batch.append(_queue.get(timeout=remaining))
+        except queue.Empty:
+            break
+    return batch
 
-    threading.Thread(target=worker, name='model-warmup', daemon=True).start()
+
+def _finish(entry, result):
+    _, _, _, future = entry
+    if future.done():
+        return
+    text = result.text.strip()
+    if getattr(result, 'language', None) == 'Chinese':
+        text = to_simplified(text)
+    future.set_result(text)
+
+
+def _run_direct(model, entry):
+    samples, language, context, _ = entry
+    results = model.transcribe(
+        audio=(samples, SAMPLE_RATE),
+        context=context,
+        language=language,
+    )
+    _finish(entry, results[0])
+
+
+def _run_batch(batch):
+    audios = [(entry[0], SAMPLE_RATE) for entry in batch]
+    languages = [entry[1] for entry in batch]
+    contexts = [entry[2] for entry in batch]
+
+    with _load_lock:
+        model = get_model()
+        if len(batch) == 1:
+            _run_direct(model, batch[0])
+            return
+        try:
+            results = model.transcribe(
+                audio=audios,
+                context=contexts,
+                language=languages,
+            )
+            for entry, result in zip(batch, results):
+                _finish(entry, result)
+        except Exception as e:
+            transcribe_logger.warning(f"批量推理失败，回退逐条: {e}")
+            for entry in batch:
+                _run_direct(model, entry)
+
+
+def _batch_worker():
+    while True:
+        batch = _collect_batch()
+        try:
+            _run_batch(batch)
+        except Exception as e:
+            transcribe_logger.error(f"推理队列处理失败: {e}")
+            for entry in batch:
+                future = entry[3]
+                if not future.done():
+                    future.set_exception(e)
 
 
 def transcribe_audio(samples, language, context=""):
@@ -122,19 +190,29 @@ def transcribe_audio(samples, language, context=""):
     if samples.size == 0:
         return ""
 
-    # 加载锁与推理锁必须分开，否则同线程重复获取非重入锁会死锁
-    with _load_lock:
-        model = get_model()
+    _ensure_worker()
+    future = Future()
+    _queue.put((samples, language, context, future))
+    return future.result(timeout=ASR_REQUEST_TIMEOUT)
 
-    with _infer_lock:
-        results = model.transcribe(
-            audio=(samples, SAMPLE_RATE),
-            context=context,
-            language=language,
-        )
 
-    text = results[0].text.strip()
-    detected = results[0].language
-    if detected == "Chinese":
-        text = to_simplified(text)
-    return text
+def preload_in_background():
+    """启动即后台预热。先加载权重并释放锁，再通过队列跑一次静音推理。
+    不能持锁提交请求，否则工作线程等锁、预热线程等结果，会死锁。"""
+    global _status, _error
+
+    def worker():
+        global _status, _error
+        try:
+            with _load_lock:
+                get_model()
+            _status = STATUS_WARMING
+            transcribe_audio(np.zeros(SAMPLE_RATE, dtype=np.float32), language=None)
+            _status = STATUS_READY
+            transcribe_logger.info("模型已就绪，可以开始录音")
+        except Exception as e:
+            _status = STATUS_ERROR
+            _error = str(e)
+            transcribe_logger.error(f"模型预热失败: {e}")
+
+    threading.Thread(target=worker, name='model-warmup', daemon=True).start()
