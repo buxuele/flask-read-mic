@@ -12,7 +12,18 @@
 4. 历史管理：会话留存、内容搜索、一键导出、合并音频回放。
 5. 单人使用定位：推理串行排队，多人并发时的行为与容量见 [docs/API.md](docs/API.md)。
 
+## macOS 客户端
+
+仓库里的 client/ 是 macOS 菜单栏客户端，按住 Ctrl 说话，停顿 0.6 秒自动切句，逐句调用本服务端的局域网接口，识别结果直接粘贴到焦点输入框。
+
+1. 服务端先启动，记下终端打印的局域网地址与密钥。
+2. brew install portaudio
+3. cd client && cp .env.example .env，填地址与密钥，再执行 ./just_run.sh
+
+细节见 [client/README.md](client/README.md)，接口协议见 [docs/API.md](docs/API.md)。
+
 ## 快速开始
+
 
 1. 环境要求：Windows 10 及以上，Python 3.11，NVIDIA 显卡，显存 4GB 以上。
 
