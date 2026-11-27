@@ -38,7 +38,7 @@ def transcribe(wav_bytes, language=None, context=None):
                 raise
             time.sleep(0.8)
             continue
-        if response.status_code in (429, 503) and attempt < 2:
+        if response.status_code in (429, 502, 503, 504) and attempt < 2:
             try:
                 wait = float(response.headers.get("Retry-After", "2"))
             except ValueError:

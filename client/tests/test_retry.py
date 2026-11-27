@@ -60,6 +60,20 @@ def test_give_up_after_three_failures():
     assert len(calls) == 3
 
 
+def test_retry_on_bad_gateway():
+    calls = []
+
+    def fake_post(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return RetryResponse(502)
+        return RetryResponse(200, "网关恢复后成功")
+
+    asr.session = lambda: _FakeSession(fake_post)
+    assert asr.transcribe(b"wav", "zh") == "网关恢复后成功"
+    assert len(calls) == 2
+
+
 def test_retry_on_rate_limit():
     calls = []
 
